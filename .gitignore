@@ -1,0 +1,20 @@
+# 🔥 Virtual Environment
+.venv/
+venv/
+env/
+
+# 🔥 Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 🔥 Model / runtime files
+*.pkl
+
+# 🔥 VS Code
+.vscode/
+
+# 🔥 OS junk
+.DS_Store
+Thumbs.db
