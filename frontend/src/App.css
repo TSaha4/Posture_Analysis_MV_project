@@ -124,9 +124,55 @@ body {
   overflow: hidden; 
   display: flex; 
   justify-content: center; 
+  position: relative;
 }
 .video-frame-container.full-height { height: 100%; }
 .video-element { height: 100%; width: 100%; object-fit: contain; }
+
+.camera-progress-shell {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 10px;
+  background: rgba(0, 0, 0, 0.35);
+  z-index: 2;
+}
+
+.camera-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #3fb950, #58a6ff);
+  transition: width 1s linear;
+}
+
+.camera-freeze-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(6, 10, 16, 0.45);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.camera-freeze-overlay p {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: white;
+}
+
+.freeze-spinner {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 5px solid rgba(255, 255, 255, 0.2);
+  border-top-color: #58a6ff;
+  animation: spin 0.9s linear infinite;
+}
 
 /* --- 4. CARDS & COMPONENTS --- */
 .card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; }
@@ -212,15 +258,26 @@ body {
   font-family: 'JetBrains Mono', monospace;
 }
 
-.cheating-banner-mini { 
-  background: var(--danger); 
-  color: white; 
-  padding: 8px; 
-  border-radius: 8px 8px 0 0; 
-  text-align: center; 
-  font-weight: bold; 
-  margin-bottom: -1px; 
+.toast-banner {
+  color: white;
+  padding: 8px;
+  border-radius: 8px 8px 0 0;
+  text-align: center;
+  font-weight: bold;
+  margin-bottom: -1px;
+}
+
+.toast-banner.error {
+  background: var(--danger);
   animation: blinker 1.5s linear infinite;
+}
+
+.toast-banner.success {
+  background: var(--success);
+}
+
+.toast-banner.info {
+  background: var(--accent);
 }
 
 /* --- 7. BUTTONS --- */
@@ -247,6 +304,7 @@ body {
 }
 .exam-btn.primary { background: var(--accent); color: white; border: none; }
 .exam-btn.secondary { background: #21262d; color: white; }
+.exam-btn.warning { background: var(--warning); color: #000; border: none; }
 .exam-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 .toggle-btn {
@@ -261,6 +319,7 @@ body {
 /* --- 8. ANIMATIONS --- */
 @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
 @keyframes blinker { 50% { opacity: 0.7; } }
+@keyframes spin { to { transform: rotate(360deg); } }
 
 .exam-card{
   width:100%;

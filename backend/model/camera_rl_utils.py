@@ -201,27 +201,58 @@ def load_q_table():
                 Q[k] = v
 
 
-def is_face_in_circle(face_info, frame_center, circle_radius):
+def is_face_in_circle(face_info, frame_center, circle_radius, ellipse_axes=None):
     if face_info is None:
         return False, 0.0
-    
+
     face_x = face_info["face_x"]
     face_y = face_info["face_y"]
     face_w = face_info["face_w"]
     face_h = face_info["face_h"]
-    
-    # Distance from face center to circle center
+
+    if ellipse_axes is not None:
+        axis_x = max(float(ellipse_axes[0]), 1.0)
+        axis_y = max(float(ellipse_axes[1]), 1.0)
+        # Less strict sampling: use a smaller inset so "mostly inside" is achievable.
+        inset_x = face_w * 0.1
+        inset_y = face_h * 0.1
+        rect_left = face_x - face_w / 2 + inset_x
+        rect_right = face_x + face_w / 2 - inset_x
+        rect_top = face_y - face_h / 2 + inset_y
+        rect_bottom = face_y + face_h / 2 - inset_y
+
+        sample_points = [
+            (face_x, face_y),
+            (face_x, rect_top),
+            (face_x, rect_bottom),
+            (rect_left, face_y),
+            (rect_right, face_y),
+            (rect_left, rect_top),
+            (rect_left, rect_bottom),
+            (rect_right, rect_top),
+            (rect_right, rect_bottom),
+        ]
+
+        inside_count = 0
+        for px, py in sample_points:
+            nx = (px - frame_center[0]) / axis_x
+            ny = (py - frame_center[1]) / axis_y
+            if (nx * nx) + (ny * ny) <= 1.0:
+                inside_count += 1
+
+        ratio_inside = inside_count / float(len(sample_points))
+        # Lower the cutoff slightly to avoid "stuck at ~50-60%" behavior.
+        return ratio_inside >= 0.5, ratio_inside
+
+    # Fallback for legacy circle-based callers.
     dx = face_x - frame_center[0]
     dy = face_y - frame_center[1]
     dist = np.sqrt(dx * dx + dy * dy)
-    
-    # Face radius (half diagonal of face)
     face_radius = np.sqrt((face_w / 2) ** 2 + (face_h / 2) ** 2)
-    
-    # Check if majority of face is inside circle (face_center + face_radius <= circle_radius)
-    required_radius = dist + face_radius * 0.6  # Allow some tolerance
+    # Less strict margin: allow more of the face to extend outside the circle/oval.
+    required_radius = dist + face_radius * 0.3
     ratio_inside = (circle_radius - dist) / face_radius if face_radius > 0 else 0
     ratio_inside = max(0, min(1, ratio_inside))
-    
+
     is_inside = required_radius <= circle_radius
     return is_inside, ratio_inside

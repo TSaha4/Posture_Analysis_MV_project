@@ -16,6 +16,15 @@ const useRLData = (isActive) => {
     mode: "idle",
     calibration_ready: false,
     face_inside_ratio: 0,
+    face_width: 0,
+    face_height: 0,
+    head_angle: 0.0,
+    eye_dir: 0.0,
+    eye_ratio: 0.0,
+    eye_distance: 0.0,
+    calibration_snapshot: null,
+    calibration_frozen: false,
+    calibration_freeze_remaining: 0.0,
     suggestion: "Waiting..."
   });
 

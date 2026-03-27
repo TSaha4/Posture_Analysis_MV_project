@@ -9,10 +9,14 @@ const QUESTION_SECONDS = 180;
 
 function App() {
   const [screen, setScreen] = useState("home");
-  const [toast, setToast] = useState("");
+  const [toast, setToast] = useState(null);
+  const [examProgress, setExamProgress] = useState(100);
   const data = useRLData(screen !== "home");
   const backendOnline = Boolean(data?.connected);
   const streamSrc = useMemo(() => `${API}/video_feed?screen=${screen}`, [screen]);
+  const showToast = useCallback((message, type = "info") => {
+    setToast({ message, type });
+  }, []);
 
   const stopAll = async () => {
     try {
@@ -33,8 +37,8 @@ function App() {
   };
 
   useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(""), 3000);
+    if (!toast?.message) return;
+    const t = setTimeout(() => setToast(null), 3000);
     return () => clearTimeout(t);
   }, [toast]);
 
@@ -44,6 +48,12 @@ function App() {
     axios
       .get(`${API}/calibrate`)
       .catch((err) => console.debug("calibrate on enter failed:", err?.message));
+  }, [screen]);
+
+  useEffect(() => {
+    if (screen !== "exam") {
+      setExamProgress(100);
+    }
   }, [screen]);
 
   if (screen === "home") {
@@ -89,17 +99,33 @@ function App() {
           <button className="exam-btn secondary" onClick={() => setScreen(screen === "calibration" ? "exam" : "calibration")}>
             {screen === "calibration" ? "Go Exam" : "Go Calibration"}
           </button>
+          {screen === "exam" && (
+            <button className="exam-btn warning" onClick={restartExam}>
+              Restart Session
+            </button>
+          )}
           <button className="toggle-btn btn-danger" onClick={leaveSession}>
             End Session
           </button>
         </div>
       </header>
 
-      {toast ? <div className="cheating-banner-mini">{toast}</div> : null}
+      {toast?.message ? <div className={`toast-banner ${toast.type || "info"}`}>{toast.message}</div> : null}
 
       <div className="main-content">
         <div className="left-panel">
           <div className="video-frame-container full-height">
+            {screen === "exam" ? (
+              <div className="camera-progress-shell">
+                <div className="camera-progress-fill" style={{ width: `${examProgress}%` }} />
+              </div>
+            ) : null}
+            {screen === "calibration" && data?.calibration_frozen ? (
+              <div className="camera-freeze-overlay">
+                <div className="freeze-spinner" />
+                <p>Locking reference... {data.calibration_freeze_remaining?.toFixed(1)}s</p>
+              </div>
+            ) : null}
             <img
               key={screen}
               src={streamSrc}
@@ -120,9 +146,9 @@ function App() {
             </div>
           ) : null}
           {screen === "calibration" ? (
-            <CalibrationPanel data={data} setToast={setToast} />
+            <CalibrationPanel data={data} showToast={showToast} />
           ) : (
-            <ExamPanel data={data} setToast={setToast} />
+            <ExamPanel data={data} showToast={showToast} setExamProgress={setExamProgress} />
           )}
         </div>
       </div>
@@ -130,26 +156,28 @@ function App() {
   );
 }
 
-function CalibrationPanel({ data, setToast }) {
+function CalibrationPanel({ data, showToast }) {
   const ratioPct = Math.round((data?.face_inside_ratio || 0) * 100);
   const ready = Boolean(data?.calibration_ready);
-  const isCalibrating = data?.mode === "calibrating";
+  const isCalibrating = data?.mode === "calibrating" || data?.mode === "calibration_freeze";
+  const snapshot = data?.calibration_snapshot;
+  const freezeActive = Boolean(data?.calibration_frozen);
 
   const resetCalibration = async () => {
     try {
       await axios.get(`${API}/calibrate`);
-      setToast("Calibration reset. Align face and capture reference.");
+      showToast("Calibration reset. Align face and capture reference.", "info");
     } catch (err) {
-      setToast(err?.response?.data?.message || "Could not reset calibration.");
+      showToast(err?.response?.data?.message || "Could not reset calibration.", "error");
     }
   };
 
   const captureReference = async () => {
     try {
       await axios.get(`${API}/capture_reference`);
-      setToast("Reference captured. Circle removed for posture tracking.");
+      showToast("Reference captured successfully.", "success");
     } catch (err) {
-      setToast(err?.response?.data?.message || "Could not capture reference.");
+      showToast(err?.response?.data?.message || "Could not capture reference.", "error");
     }
   };
 
@@ -157,16 +185,38 @@ function CalibrationPanel({ data, setToast }) {
     <>
       <div className="card">
         <h3>Calibration Status</h3>
-        <p>Face inside circle: <strong>{ratioPct}%</strong></p>
-        <p>Capture rule: minimum 80%</p>
-        <p>Mode: <strong>{data?.mode || "loading"}</strong></p>
-        <p>Ready: <strong>{ready ? "Yes" : "No"}</strong></p>
-        {!isCalibrating ? (
+        {isCalibrating ? (
+          <>
+            <p>Face inside oval: <strong>{ratioPct}%</strong></p>
+            <p>Capture rule: minimum 50%</p>
+            <p>Freeze status: <strong>{freezeActive ? `Locking (${data?.calibration_freeze_remaining?.toFixed(1)}s)` : "Idle"}</strong></p>
+            <p>Ready: <strong>{ready ? "Yes" : "No"}</strong></p>
+            <p>Face Width: {Math.round(data?.face_width || 0)}</p>
+            <p>Face Height: {Math.round(data?.face_height || 0)}</p>
+            <p>Head Angle: {(data?.head_angle ?? 0).toFixed(2)}</p>
+            <p>Eye Direction: {(data?.eye_dir ?? 0).toFixed(2)}</p>
+            <p>Eye Ratio: {(data?.eye_ratio ?? 0).toFixed(2)}</p>
+            <p>Eye Distance: {(data?.eye_distance ?? 0).toFixed(2)}</p>
+          </>
+        ) : (
           <p style={{ color: "#f2c94c" }}>
             Click <strong>Reset</strong> to return to calibration mode.
           </p>
-        ) : null}
+        )}
+        <p>Mode: <strong>{data?.mode || "loading"}</strong></p>
       </div>
+
+      {snapshot ? (
+        <div className="card">
+          <h3>Captured Reference Ratios</h3>
+          <p>Face Width: {Math.round(snapshot.face_w || 0)}</p>
+          <p>Face Height: {Math.round(snapshot.face_h || 0)}</p>
+          <p>Head Angle: {(snapshot.head_angle ?? 0).toFixed(2)}</p>
+          <p>Eye Direction: {(snapshot.eye_dir ?? 0).toFixed(2)}</p>
+          <p>Eye Ratio: {(snapshot.eye_ratio ?? 0).toFixed(2)}</p>
+          <p>Eye Distance: {(snapshot.eye_dist ?? 0).toFixed(2)}</p>
+        </div>
+      ) : null}
 
       <div className="card">
         <h3>Controls</h3>
@@ -183,18 +233,42 @@ function CalibrationPanel({ data, setToast }) {
         <div className="advice-box">{data?.suggestion || "Waiting for camera data..."}</div>
       </div>
 
-      <LiveTelemetry data={data} showScores={false} />
+      <LiveTelemetry data={data} showScores={!isCalibrating} />
     </>
   );
 }
 
-function ExamPanel({ data, setToast }) {
+function ExamPanel({ data, showToast, setExamProgress }) {
   const [questions, setQuestions] = useState([]);
   const [questionIdx, setQuestionIdx] = useState(0);
   const [answering, setAnswering] = useState(false);
   const [timeLeft, setTimeLeft] = useState(QUESTION_SECONDS);
   const [result, setResult] = useState(null);
   const [examReady, setExamReady] = useState(false);
+  const baselineReady = ["posture", "exam", "exam_question"].includes(data?.mode);
+  const inActiveQuestion = data?.mode === "exam_question";
+
+  useEffect(() => {
+    if (answering) {
+      setExamProgress((timeLeft / QUESTION_SECONDS) * 100);
+      return;
+    }
+    setExamProgress(result ? 0 : 100);
+  }, [answering, timeLeft, result, setExamProgress]);
+
+  useEffect(() => () => setExamProgress(100), [setExamProgress]);
+
+  const ensureExamStarted = useCallback(async () => {
+    try {
+      await axios.get(`${API}/start_exam`);
+      setExamReady(true);
+      return true;
+    } catch (err) {
+      setExamReady(false);
+      showToast(err?.response?.data?.message || "Exam requires completed calibration.", "error");
+      return false;
+    }
+  }, [showToast]);
 
   useEffect(() => {
     const shuffled = [...hrQuestions].sort(() => Math.random() - 0.5).slice(0, 3);
@@ -204,14 +278,13 @@ function ExamPanel({ data, setToast }) {
     setTimeLeft(QUESTION_SECONDS);
     setResult(null);
 
-    axios
-      .get(`${API}/start_exam`)
-      .then(() => setExamReady(true))
-      .catch((err) => {
-        setExamReady(false);
-        setToast(err?.response?.data?.message || "Exam requires completed calibration.");
-      });
-  }, [setToast]);
+    ensureExamStarted();
+  }, [ensureExamStarted]);
+
+  useEffect(() => {
+    if (!baselineReady || examReady) return;
+    ensureExamStarted();
+  }, [baselineReady, examReady, ensureExamStarted]);
 
   useEffect(() => {
     if (!answering) return;
@@ -226,11 +299,11 @@ function ExamPanel({ data, setToast }) {
       const res = await axios.get(`${API}/end_question`);
       setResult(res.data);
     } catch (err) {
-      setToast(err?.response?.data?.message || "Could not compute question result.");
+      showToast(err?.response?.data?.message || "Could not compute question result.", "error");
     } finally {
       setAnswering(false);
     }
-  }, [setToast]);
+  }, [showToast]);
 
   useEffect(() => {
     if (!answering || timeLeft !== 0) return;
@@ -241,10 +314,14 @@ function ExamPanel({ data, setToast }) {
     setResult(null);
     setTimeLeft(QUESTION_SECONDS);
     try {
+      if (!examReady) {
+        const started = await ensureExamStarted();
+        if (!started) return;
+      }
       await axios.get(`${API}/start_question`);
       setAnswering(true);
     } catch (err) {
-      setToast(err?.response?.data?.message || "Could not start answer timer.");
+      showToast(err?.response?.data?.message || "Could not start answer timer.", "error");
     }
   };
 
@@ -258,9 +335,43 @@ function ExamPanel({ data, setToast }) {
   const finishExam = async () => {
     try {
       const res = await axios.get(`${API}/end_exam`);
-      setToast(`Final score ${res.data.score}/100 (${res.data.label})`);
+      const scoreText = res.data.time_penalty > 0 
+        ? `Final score ${res.data.score}/100 (${res.data.label}) - Base: ${res.data.base_score}%, Time penalty: ${res.data.time_penalty}%`
+        : `Final score ${res.data.score}/100 (${res.data.label})`;
+      showToast(scoreText, "success");
     } catch (err) {
-      setToast(err?.response?.data?.message || "Could not end exam.");
+      showToast(err?.response?.data?.message || "Could not end exam.", "error");
+    }
+  };
+
+  const restartExam = async () => {
+    try {
+      await axios.get(`${API}/restart_exam`);
+      // Reset frontend state
+      setQuestions([]);
+      setQuestionIdx(0);
+      setAnswering(false);
+      setTimeLeft(QUESTION_SECONDS);
+      setResult(null);
+      setExamReady(false);
+      // Re-shuffle questions
+      const shuffled = [...hrQuestions].sort(() => Math.random() - 0.5).slice(0, 3);
+      setQuestions(shuffled);
+      showToast("Exam session restarted", "info");
+    } catch (err) {
+      showToast(err?.response?.data?.message || "Could not restart exam.", "error");
+    }
+  };
+
+  const redoQuestion = async () => {
+    try {
+      await axios.get(`${API}/redo_question`);
+      setResult(null);
+      setTimeLeft(QUESTION_SECONDS);
+      setAnswering(false);
+      showToast("Question reset - you can try again", "info");
+    } catch (err) {
+      showToast(err?.response?.data?.message || "Could not reset question.", "error");
     }
   };
 
@@ -294,7 +405,7 @@ function ExamPanel({ data, setToast }) {
       <div className="card">
         <h3>Live Suggestion</h3>
         <div className="advice-box">{data?.suggestion || "Waiting..."}</div>
-        {data?.is_cheating ? <p style={{ color: "#f85149" }}>Eye contact lost.</p> : null}
+        {inActiveQuestion && data?.is_cheating ? <p style={{ color: "#f85149" }}>Eye contact lost.</p> : null}
       </div>
 
       {result ? (
@@ -302,14 +413,23 @@ function ExamPanel({ data, setToast }) {
           <h3>Question Score</h3>
           <h1 className={`score-number ${result.score < 70 ? "critical" : "stable"}`}>{result.score}/100</h1>
           <p>{result.label}</p>
+          {result.base_score !== undefined && result.time_penalty > 0 && (
+            <p style={{ fontSize: "0.9em", color: "#f85149" }}>
+              Base score: {result.base_score}% - Time penalty: {result.time_penalty}% 
+              (Answered in {result.elapsed_time}s)
+            </p>
+          )}
           <div style={{ display: "grid", gap: 6 }}>
             {(result.errors || []).map((e) => (
               <div key={e.key} className="state-box">
-                {e.description} ({e.percent_frames}%)
+                {e.description} ({e.key === "time_penalty" ? `${e.percent_frames}% penalty` : `${e.percent_frames}%`})
               </div>
             ))}
           </div>
           <div className="exam-controls" style={{ marginTop: 10 }}>
+            <button className="exam-btn secondary" onClick={redoQuestion} style={{ marginRight: 10 }}>
+              Redo Question
+            </button>
             {questionIdx < 2 ? (
               <button className="exam-btn primary" onClick={nextQuestion}>Next Question</button>
             ) : (
