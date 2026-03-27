@@ -1,0 +1,32 @@
+[
+  {
+    "id": 1,
+    "category": "Introduction",
+    "question": "Tell me about yourself and your background."
+  },
+  {
+    "id": 2,
+    "category": "Motivation",
+    "question": "Why do you want to work for our company?"
+  },
+  {
+    "id": 3,
+    "category": "Behavioral",
+    "question": "Describe a time you faced a difficult challenge at work and how you overcame it."
+  },
+  {
+    "id": 4,
+    "category": "Strengths & Weaknesses",
+    "question": "What would you say is your greatest weakness, and how are you working to improve it?"
+  },
+  {
+    "id": 5,
+    "category": "Teamwork",
+    "question": "Tell me about a time you had to work with a difficult team member."
+  },
+  {
+    "id": 6,
+    "category": "Future Goals",
+    "question": "Where do you see yourself in five years?"
+  }
+]
