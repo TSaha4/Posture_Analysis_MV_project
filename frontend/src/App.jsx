@@ -4,14 +4,13 @@ import useRLData from "./hooks/useRLData";
 import hrQuestions from "./data/hrQuestions.json";
 import "./App.css";
 
-const API = "/api";
+const API = "http://127.0.0.1:8000";
 const QUESTION_SECONDS = 180;
 
 function App() {
   const [screen, setScreen] = useState("home");
   const [toast, setToast] = useState(null);
   const [examProgress, setExamProgress] = useState(100);
-  const [examSessionKey, setExamSessionKey] = useState(0);
   const data = useRLData(screen !== "home");
   const backendOnline = Boolean(data?.connected);
   const streamSrc = useMemo(() => `${API}/video_feed?screen=${screen}`, [screen]);
@@ -37,16 +36,10 @@ function App() {
     setScreen("home");
   };
 
-  const restartExam = useCallback(async () => {
-    try {
-      await axios.get(`${API}/restart_exam`);
-      setExamProgress(100);
-      setExamSessionKey((value) => value + 1);
-      showToast("Exam session restarted", "info");
-    } catch (err) {
-      showToast(err?.response?.data?.message || "Could not restart exam.", "error");
-    }
-  }, [showToast]);
+  const finishAndLeaveSession = async () => {
+    await stopAll();
+    setScreen("home");
+  };
 
   useEffect(() => {
     if (!toast?.message) return;
@@ -60,12 +53,6 @@ function App() {
     axios
       .get(`${API}/calibrate`)
       .catch((err) => console.debug("calibrate on enter failed:", err?.message));
-  }, [screen]);
-
-  useEffect(() => {
-    if (screen !== "exam") {
-      setExamProgress(100);
-    }
   }, [screen]);
 
   if (screen === "home") {
@@ -111,11 +98,6 @@ function App() {
           <button className="exam-btn secondary" onClick={() => setScreen(screen === "calibration" ? "exam" : "calibration")}>
             {screen === "calibration" ? "Go Exam" : "Go Calibration"}
           </button>
-          {screen === "exam" && (
-            <button className="exam-btn warning" onClick={restartExam}>
-              Restart Session
-            </button>
-          )}
           <button className="toggle-btn btn-danger" onClick={leaveSession}>
             End Session
           </button>
@@ -164,7 +146,7 @@ function App() {
               data={data}
               showToast={showToast}
               setExamProgress={setExamProgress}
-              sessionKey={examSessionKey}
+              onFinishSession={finishAndLeaveSession}
             />
           )}
         </div>
@@ -255,7 +237,7 @@ function CalibrationPanel({ data, showToast }) {
   );
 }
 
-function ExamPanel({ data, showToast, setExamProgress, sessionKey }) {
+function ExamPanel({ data, showToast, setExamProgress, onFinishSession }) {
   const [questions, setQuestions] = useState([]);
   const [questionIdx, setQuestionIdx] = useState(0);
   const [answering, setAnswering] = useState(false);
@@ -296,7 +278,24 @@ function ExamPanel({ data, showToast, setExamProgress, sessionKey }) {
     setResult(null);
 
     ensureExamStarted();
-  }, [ensureExamStarted, sessionKey]);
+  }, [ensureExamStarted]);
+
+  const restartSession = async () => {
+    try {
+      await axios.get(`${API}/end_exam`);
+    } catch (err) {
+      console.debug("end_exam before restart skipped:", err?.message);
+    }
+
+    const shuffled = [...hrQuestions].sort(() => Math.random() - 0.5).slice(0, 3);
+    setQuestions(shuffled);
+    setQuestionIdx(0);
+    setAnswering(false);
+    setTimeLeft(QUESTION_SECONDS);
+    setResult(null);
+    setExamReady(false);
+    showToast("Session restarted.", "info");
+  };
 
   useEffect(() => {
     if (!baselineReady || examReady) return;
@@ -331,19 +330,24 @@ function ExamPanel({ data, showToast, setExamProgress, sessionKey }) {
     setResult(null);
     setTimeLeft(QUESTION_SECONDS);
     try {
-      if (!examReady) {
-        const started = await ensureExamStarted();
-        if (!started) return;
-      }
-      await axios.get(`${API}/start_question`);
+      const started = await ensureExamStarted();
+      if (!started) return;
+      await axios.get(`${API}/begin_answer`);
       setAnswering(true);
     } catch (err) {
+      setExamReady(false);
       showToast(err?.response?.data?.message || "Could not start answer timer.", "error");
     }
   };
 
   const nextQuestion = () => {
     setQuestionIdx((q) => Math.min(q + 1, 2));
+    setResult(null);
+    setTimeLeft(QUESTION_SECONDS);
+    setAnswering(false);
+  };
+
+  const redoQuestion = () => {
     setResult(null);
     setTimeLeft(QUESTION_SECONDS);
     setAnswering(false);
@@ -356,20 +360,9 @@ function ExamPanel({ data, showToast, setExamProgress, sessionKey }) {
         ? `Final score ${res.data.score}/100 (${res.data.label}) - Base: ${res.data.base_score}%, Time penalty: ${res.data.time_penalty}%`
         : `Final score ${res.data.score}/100 (${res.data.label})`;
       showToast(scoreText, "success");
+      await onFinishSession();
     } catch (err) {
       showToast(err?.response?.data?.message || "Could not end exam.", "error");
-    }
-  };
-
-  const redoQuestion = async () => {
-    try {
-      await axios.get(`${API}/redo_question`);
-      setResult(null);
-      setTimeLeft(QUESTION_SECONDS);
-      setAnswering(false);
-      showToast("Question reset - you can try again", "info");
-    } catch (err) {
-      showToast(err?.response?.data?.message || "Could not reset question.", "error");
     }
   };
 
@@ -424,14 +417,19 @@ function ExamPanel({ data, showToast, setExamProgress, sessionKey }) {
               </div>
             ))}
           </div>
-          <div className="exam-controls" style={{ marginTop: 10 }}>
+          <div className="exam-controls result-actions" style={{ marginTop: 10 }}>
             <button className="exam-btn secondary" onClick={redoQuestion} style={{ marginRight: 10 }}>
               Redo Question
             </button>
             {questionIdx < 2 ? (
               <button className="exam-btn primary" onClick={nextQuestion}>Next Question</button>
             ) : (
-              <button className="exam-btn primary" onClick={finishExam}>Finish Exam</button>
+              <>
+                <button className="exam-btn secondary" onClick={restartSession} style={{ marginRight: 10 }}>
+                  Restart Session
+                </button>
+                <button className="exam-btn primary" onClick={finishExam}>Finish Exam</button>
+              </>
             )}
           </div>
         </div>

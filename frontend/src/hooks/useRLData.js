@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
 
-const API = "/api";
+const API = "http://127.0.0.1:8000";
 
 const useRLData = (isActive) => {
   const [data, setData] = useState({

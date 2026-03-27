@@ -206,7 +206,12 @@ body {
 }
 .exam-header { flex: 0 0 140px; }
 .exam-question-text { flex: 1; font-size: 1.3rem; margin: 0; font-weight: 500; }
-.exam-controls { display: flex; gap: 10px; }
+.exam-controls { display: flex; gap: 10px; flex-wrap: wrap; }
+.exam-controls > * { min-width: 0; }
+.result-actions .exam-btn {
+  flex: 1 1 140px;
+  margin-right: 0 !important;
+}
 
 /* --- 5. PROGRESS & SCORING --- */
 .exam-progress-bg { height: 4px; background: #0d1117; margin-top: 8px; border-radius: 2px; }
