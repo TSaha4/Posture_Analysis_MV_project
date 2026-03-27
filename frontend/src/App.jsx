@@ -11,6 +11,7 @@ function App() {
   const [screen, setScreen] = useState("home");
   const [toast, setToast] = useState(null);
   const [examProgress, setExamProgress] = useState(100);
+  const [examSessionKey, setExamSessionKey] = useState(0);
   const data = useRLData(screen !== "home");
   const backendOnline = Boolean(data?.connected);
   const streamSrc = useMemo(() => `${API}/video_feed?screen=${screen}`, [screen]);
@@ -35,6 +36,17 @@ function App() {
     await stopAll();
     setScreen("home");
   };
+
+  const restartExam = useCallback(async () => {
+    try {
+      await axios.get(`${API}/restart_exam`);
+      setExamProgress(100);
+      setExamSessionKey((value) => value + 1);
+      showToast("Exam session restarted", "info");
+    } catch (err) {
+      showToast(err?.response?.data?.message || "Could not restart exam.", "error");
+    }
+  }, [showToast]);
 
   useEffect(() => {
     if (!toast?.message) return;
@@ -148,7 +160,12 @@ function App() {
           {screen === "calibration" ? (
             <CalibrationPanel data={data} showToast={showToast} />
           ) : (
-            <ExamPanel data={data} showToast={showToast} setExamProgress={setExamProgress} />
+            <ExamPanel
+              data={data}
+              showToast={showToast}
+              setExamProgress={setExamProgress}
+              sessionKey={examSessionKey}
+            />
           )}
         </div>
       </div>
@@ -238,7 +255,7 @@ function CalibrationPanel({ data, showToast }) {
   );
 }
 
-function ExamPanel({ data, showToast, setExamProgress }) {
+function ExamPanel({ data, showToast, setExamProgress, sessionKey }) {
   const [questions, setQuestions] = useState([]);
   const [questionIdx, setQuestionIdx] = useState(0);
   const [answering, setAnswering] = useState(false);
@@ -279,7 +296,7 @@ function ExamPanel({ data, showToast, setExamProgress }) {
     setResult(null);
 
     ensureExamStarted();
-  }, [ensureExamStarted]);
+  }, [ensureExamStarted, sessionKey]);
 
   useEffect(() => {
     if (!baselineReady || examReady) return;
@@ -341,25 +358,6 @@ function ExamPanel({ data, showToast, setExamProgress }) {
       showToast(scoreText, "success");
     } catch (err) {
       showToast(err?.response?.data?.message || "Could not end exam.", "error");
-    }
-  };
-
-  const restartExam = async () => {
-    try {
-      await axios.get(`${API}/restart_exam`);
-      // Reset frontend state
-      setQuestions([]);
-      setQuestionIdx(0);
-      setAnswering(false);
-      setTimeLeft(QUESTION_SECONDS);
-      setResult(null);
-      setExamReady(false);
-      // Re-shuffle questions
-      const shuffled = [...hrQuestions].sort(() => Math.random() - 0.5).slice(0, 3);
-      setQuestions(shuffled);
-      showToast("Exam session restarted", "info");
-    } catch (err) {
-      showToast(err?.response?.data?.message || "Could not restart exam.", "error");
     }
   };
 

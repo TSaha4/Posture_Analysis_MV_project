@@ -38,6 +38,9 @@ baseline = None
 epsilon = 0.25
 camera_thread = None
 camera_active = False
+camera_error = None
+camera_lock = threading.Lock()
+camera_start_event = threading.Event()
 
 current_frame = None
 
@@ -113,6 +116,7 @@ def camera_background_task():
     global question_stats, question_last_state
     global latest_face_info, latest_face_inside_ratio, calibration_snapshot
     global calibration_frozen, calibration_frozen_until, post_capture_grace_until
+    global camera_active, camera_thread, camera_error
 
     if cap is None:
         try:
@@ -126,9 +130,22 @@ def camera_background_task():
             if not cap.isOpened():
                 raise RuntimeError('Cannot open webcam. Check camera permissions and device index.')
         except Exception as e:
+            camera_error = str(e)
+            camera_active = False
+            camera_thread = None
+            camera_start_event.set()
             print(f"Error opening camera: {e}")
+            with data_lock:
+                current_rl_data = {
+                    **current_rl_data,
+                    "mode": "idle",
+                    "suggestion": camera_error,
+                }
             cap = None
             return
+
+    camera_error = None
+    camera_start_event.set()
 
     missing_face_count = 0
     MAX_MISSING_FRAMES = 60
@@ -361,6 +378,35 @@ def camera_background_task():
                 "suggestion": suggestion,
             }
 
+    with camera_lock:
+        camera_thread = None
+
+
+def ensure_camera_running():
+    global camera_active, camera_thread, camera_error, current_frame
+
+    with camera_lock:
+        if camera_thread is not None and camera_thread.is_alive():
+            return True, None
+
+        camera_error = None
+        current_frame = None
+        camera_start_event.clear()
+        camera_active = True
+        camera_thread = threading.Thread(target=camera_background_task, daemon=True)
+        camera_thread.start()
+
+    started = camera_start_event.wait(timeout=2.0)
+    if started and not camera_error:
+        return True, None
+
+    with camera_lock:
+        if camera_thread is not None and not camera_thread.is_alive():
+            camera_thread = None
+        camera_active = False
+
+    return False, camera_error or "Camera did not start in time."
+
 
 # ---------------------------
 # INIT
@@ -386,7 +432,7 @@ def get_state():
 
 @app.route("/start_exam")
 def start_exam():
-    global exam_active, question_active, posture_stats, camera_thread, camera_active
+    global exam_active, question_active, posture_stats
     global question_stats, question_last_state
     global calibration_frozen, post_capture_grace_until, exam_start_time
 
@@ -412,10 +458,10 @@ def start_exam():
     calibration_frozen = False
     post_capture_grace_until = 0.0
 
-    if not camera_active:
-        camera_active = True
-        camera_thread = threading.Thread(target=camera_background_task, daemon=True)
-        camera_thread.start()
+    camera_ready, error_message = ensure_camera_running()
+    if not camera_ready:
+        exam_active = False
+        return jsonify({"status": "error", "message": error_message}), 500
         print("📹 Camera started")
 
     print("🎯 Exam started")
@@ -447,6 +493,36 @@ def redo_question():
     print("🔄 Question reset for redo")
 
     return jsonify({"status": "question_reset"})
+
+
+@app.route("/start_question")
+def start_question():
+    global exam_active, question_active, question_stats, question_last_state, question_start_time
+
+    if baseline is None:
+        return jsonify({"status": "error", "message": "Please complete calibration first."}), 400
+
+    if not exam_active:
+        return jsonify({"status": "error", "message": "Start the exam session first."}), 400
+
+    camera_ready, error_message = ensure_camera_running()
+    if not camera_ready:
+        return jsonify({"status": "error", "message": error_message}), 500
+
+    question_active = True
+    question_start_time = time.time()
+    question_last_state = None
+    question_stats = {
+        "good": 0,
+        "bad": 0,
+        "position_error": 0,
+        "head_error": 0,
+        "gaze_error": 0,
+        "reward_total": 0.0,
+        "reward_transitions": 0,
+    }
+
+    return jsonify({"status": "question_started"})
 
 
 @app.route("/end_question")
@@ -546,6 +622,45 @@ def end_question():
     })
 
 
+@app.route("/end_exam")
+def end_exam():
+    global exam_active, question_active, exam_start_time, question_start_time, question_last_state
+
+    if not exam_active:
+        return jsonify({"status": "error", "message": "No active exam."}), 400
+
+    question_active = False
+    question_start_time = None
+    question_last_state = None
+
+    total = posture_stats["good"] + posture_stats["bad"]
+    base_score = int((posture_stats["good"] / total) * 100) if total > 0 else 0
+
+    elapsed_time = time.time() - exam_start_time if exam_start_time else 0
+    time_penalty = 0
+    if elapsed_time > 9 * 60:
+        time_penalty = 10
+    elif elapsed_time > 7 * 60:
+        time_penalty = 5
+
+    score = max(0, base_score - time_penalty)
+    label = "Excellent" if score > 80 else ("Good" if score > 60 else ("Average" if score > 40 else "Poor"))
+
+    exam_active = False
+    exam_start_time = None
+
+    return jsonify({
+        "status": "exam_ended",
+        "score": score,
+        "base_score": base_score,
+        "time_penalty": time_penalty,
+        "elapsed_time": round(elapsed_time, 1),
+        "label": label,
+        "good_frames": posture_stats["good"],
+        "bad_frames": posture_stats["bad"],
+    })
+
+
 @app.route("/restart_exam")
 def restart_exam():
     global exam_active, question_active, posture_stats, question_stats, question_last_state
@@ -576,15 +691,20 @@ def restart_exam():
 
 @app.route("/stop_session")
 def stop_session():
-    global camera_active, cap, camera_thread
+    global camera_active, cap, camera_thread, camera_error, current_frame
     global exam_active, question_active
     camera_active = False
     exam_active = False
     question_active = False
+    camera_error = None
+    current_frame = None
     
     if cap:
         cap.release()
         cap = None
+
+    with camera_lock:
+        camera_thread = None
         print("📷 Camera released")
     
     save_q_table()
@@ -673,11 +793,9 @@ def capture_reference():
 
 @app.route("/video_feed")
 def video_feed():
-    global camera_active, camera_thread
-    if not camera_active:
-        camera_active = True
-        camera_thread = threading.Thread(target=camera_background_task, daemon=True)
-        camera_thread.start()
+    camera_ready, error_message = ensure_camera_running()
+    if not camera_ready:
+        return jsonify({"status": "error", "message": error_message}), 500
         print("📹 Camera started for video feed")
     
     def generate():
