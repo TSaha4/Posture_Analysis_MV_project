@@ -1,50 +1,76 @@
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import useRLData from "./hooks/useRLData";
 import hrQuestions from "./data/hrQuestions.json";
 import "./App.css";
 
-function App() {
-  const [view, setView] = useState("home");
-  const [questionIndex, setQuestionIndex] = useState(0);
-  
-  const isActive = view !== "home";
-  const data = useRLData(isActive);
+const API = "/api";
+const QUESTION_SECONDS = 180;
 
-  const handleExit = async () => {
+function App() {
+  const [screen, setScreen] = useState("home");
+  const [toast, setToast] = useState("");
+  const data = useRLData(screen !== "home");
+  const backendOnline = Boolean(data?.connected);
+  const streamSrc = useMemo(() => `${API}/video_feed?screen=${screen}`, [screen]);
+
+  const stopAll = async () => {
     try {
-      await axios.get("http://localhost:8000/stop_session");
+      await axios.get(`${API}/end_exam`);
     } catch (err) {
-      console.error("Error stopping session:", err);
+      console.debug("end_exam skipped:", err?.message);
     }
-    setView("home");
-    setQuestionIndex(0);
+    try {
+      await axios.get(`${API}/stop_session`);
+    } catch (err) {
+      console.debug("stop_session skipped:", err?.message);
+    }
   };
 
-  if (view === "home") {
+  const leaveSession = async () => {
+    await stopAll();
+    setScreen("home");
+  };
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(""), 3000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  useEffect(() => {
+    if (screen !== "calibration") return;
+    // Always start calibration in a clean state so capture can become active.
+    axios
+      .get(`${API}/calibrate`)
+      .catch((err) => console.debug("calibrate on enter failed:", err?.message));
+  }, [screen]);
+
+  if (screen === "home") {
     return (
       <div className="welcome-screen">
-        <div className="bg-glow blue"></div>
-        <div className="bg-glow purple"></div>
-
+        <div className="bg-glow blue" />
+        <div className="bg-glow purple" />
         <div className="hero-section">
-          <div className="badge-chip">AI-Powered Interview Coach</div>
-          <h2 className="glitch-text">Professional Presence Studio</h2>
-          <p className="hero-subtitle">Master your non-verbal cues and integrity before the high-stakes call.</p>
+          <div className="badge-chip">RL Interview Pipeline</div>
+          <h2 className="glitch-text">Calibration + Timed Exam</h2>
+          <p className="hero-subtitle">
+            Capture a strict calibration reference first, then run a timed 3-question mock interview with live posture scoring.
+          </p>
 
           <div className="mode-selector-grid">
-            <div className="mode-card glass-morphism" onClick={() => setView("posture")}>
-              <div className="icon-wrapper">🧘‍♂️</div>
-              <h3>Body Language Prep</h3>
-              <p>Calibrate your "Interview Stance." Train the AI to recognize your most confident, professional alignment.</p>
-              <button className="start-btn posture-btn">Start Calibration</button>
+            <div className="glass-morphism mode-card" onClick={() => setScreen("calibration")}>
+              <div className="icon-wrapper">🎯</div>
+              <h3>Calibration Room</h3>
+              <p>Align face in circle, capture reference, freeze frame, start posture baseline.</p>
+              <button className="start-btn posture-btn">Go to Calibration</button>
             </div>
 
-            <div className="mode-card glass-morphism proctor-card" onClick={() => setView("proctor")}>
+            <div className="glass-morphism mode-card" onClick={() => setScreen("exam")}>
               <div className="icon-wrapper">🛡️</div>
-              <h3>Mock Interview Room</h3>
-              <p>Answer behavioral questions while the AI monitors gaze integrity and professional poise.</p>
-              <button className="start-btn proctor-btn">Enter Exam Room</button>
+              <h3>Exam Room</h3>
+              <p>Random 3 questions, 3 minutes each, start-answer timer, score with posture errors.</p>
+              <button className="start-btn proctor-btn">Go to Exam</button>
             </div>
           </div>
         </div>
@@ -56,142 +82,260 @@ function App() {
     <div className="container">
       <header className="header">
         <div className="header-title">
-          <h1>{view === "proctor" ? "🛡️ Live Mock Interview" : "🔵 Body Language Calibration"}</h1>
-          <span className="status-badge active">🟢 COACHING LIVE</span>
+          <h1>{screen === "calibration" ? "🎯 Calibration Room" : "🛡️ Exam Room"}</h1>
+          <span className="status-badge active">Backend: {data?.mode || "loading"}</span>
         </div>
-        <button className="toggle-btn btn-danger" onClick={handleExit}>End Session</button>
+        <div className="exam-controls">
+          <button className="exam-btn secondary" onClick={() => setScreen(screen === "calibration" ? "exam" : "calibration")}>
+            {screen === "calibration" ? "Go Exam" : "Go Calibration"}
+          </button>
+          <button className="toggle-btn btn-danger" onClick={leaveSession}>
+            End Session
+          </button>
+        </div>
       </header>
 
+      {toast ? <div className="cheating-banner-mini">{toast}</div> : null}
+
       <div className="main-content">
-        {view === "proctor" ? (
-          <ProctorPage data={data} idx={questionIndex} setIdx={setQuestionIndex} />
-        ) : (
-          <PosturePage data={data} />
-        )}
+        <div className="left-panel">
+          <div className="video-frame-container full-height">
+            <img
+              key={screen}
+              src={streamSrc}
+              alt="Live Feed"
+              className="video-element"
+            />
+          </div>
+        </div>
+
+        <div className="dashboard-sidebar">
+          {!backendOnline ? (
+            <div className="card">
+              <h3>Backend status</h3>
+              <p>Backend seems offline or not responding.</p>
+              <p style={{ opacity: 0.85 }}>
+                Start the backend on port 8000, then reload this page.
+              </p>
+            </div>
+          ) : null}
+          {screen === "calibration" ? (
+            <CalibrationPanel data={data} setToast={setToast} />
+          ) : (
+            <ExamPanel data={data} setToast={setToast} />
+          )}
+        </div>
       </div>
     </div>
   );
 }
 
-// --- PAGE: POSTURE TRAINING (With Action Card) ---
-const PosturePage = ({ data }) => (
-  <>
-    {/* LEFT: VIDEO */}
-    <div className="left-panel">
-      <div className="video-frame-container full-height">
-        <VideoFeed />
-        <button className="calibrate-btn" onClick={async () => {
-          try {
-            await axios.get("http://localhost:8000/calibrate");
-            alert("Calibration reset. Position yourself and wait for auto-calibration.");
-          } catch (err) {
-            console.error("Error resetting calibration:", err);
-          }
-        }}>Reset Calibration</button>
+function CalibrationPanel({ data, setToast }) {
+  const ratioPct = Math.round((data?.face_inside_ratio || 0) * 100);
+  const ready = Boolean(data?.calibration_ready);
+  const isCalibrating = data?.mode === "calibrating";
+
+  const resetCalibration = async () => {
+    try {
+      await axios.get(`${API}/calibrate`);
+      setToast("Calibration reset. Align face and capture reference.");
+    } catch (err) {
+      setToast(err?.response?.data?.message || "Could not reset calibration.");
+    }
+  };
+
+  const captureReference = async () => {
+    try {
+      await axios.get(`${API}/capture_reference`);
+      setToast("Reference captured. Circle removed for posture tracking.");
+    } catch (err) {
+      setToast(err?.response?.data?.message || "Could not capture reference.");
+    }
+  };
+
+  return (
+    <>
+      <div className="card">
+        <h3>Calibration Status</h3>
+        <p>Face inside circle: <strong>{ratioPct}%</strong></p>
+        <p>Capture rule: minimum 80%</p>
+        <p>Mode: <strong>{data?.mode || "loading"}</strong></p>
+        <p>Ready: <strong>{ready ? "Yes" : "No"}</strong></p>
+        {!isCalibrating ? (
+          <p style={{ color: "#f2c94c" }}>
+            Click <strong>Reset</strong> to return to calibration mode.
+          </p>
+        ) : null}
       </div>
-    </div>
 
-    {/* RIGHT: SIDEBAR (ONLY 3 COMPONENTS) */}
-    <div className="dashboard-sidebar">
-
-      {/* 1. STATUS */}
-      <StatusPanel data={data} />
-
-      {/* 2. ACTION */}
-      <ActionDisplay action={data?.action} />
-
-      {/* 3. STATS */}
-      <StatsDashboard stats={data} />
-
-    </div>
-  </>
-);
-
-// --- PAGE: PROCTORED EXAM (Action Card Hidden) ---
-const ProctorPage = ({ data, idx, setIdx }) => (
-  <>
-    <div className="left-panel proctor-layout">
-      <div className="row-question">
-        {data.is_cheating && <div className="cheating-banner-mini">⚠️ EYE CONTACT LOST: LOOK AT THE CAMERA</div>}
-        <InterviewPrompter idx={idx} setIdx={setIdx} />
-      </div>
-      <div className="row-video">
-        <div className="video-frame-container">
-          <VideoFeed />
+      <div className="card">
+        <h3>Controls</h3>
+        <div className="exam-controls">
+          <button className="exam-btn secondary" onClick={resetCalibration}>Reset</button>
+          <button className="exam-btn primary" onClick={captureReference} disabled={!ready || !isCalibrating}>
+            Capture Reference
+          </button>
         </div>
       </div>
-    </div>
-    <div className="dashboard-sidebar">
-      <div className="card trust-card-pro" style={{ borderBottom: data.trust_score < 70 ? '4px solid #f85149' : '4px solid #3fb950' }}>
-        <h3 className="card-label">Integrity & Gaze Score</h3>
-        <h1 className={`score-number ${data.trust_score < 70 ? 'critical' : 'stable'}`}>{data.trust_score}%</h1>
-        <div className="trust-bar-bg">
-          <div className="trust-bar-fill" style={{ width: `${data.trust_score}%`, backgroundColor: data.trust_score < 70 ? '#f85149' : '#3fb950' }}></div>
+
+      <div className="card">
+        <h3>Live Suggestion</h3>
+        <div className="advice-box">{data?.suggestion || "Waiting for camera data..."}</div>
+      </div>
+
+      <LiveTelemetry data={data} showScores={false} />
+    </>
+  );
+}
+
+function ExamPanel({ data, setToast }) {
+  const [questions, setQuestions] = useState([]);
+  const [questionIdx, setQuestionIdx] = useState(0);
+  const [answering, setAnswering] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(QUESTION_SECONDS);
+  const [result, setResult] = useState(null);
+  const [examReady, setExamReady] = useState(false);
+
+  useEffect(() => {
+    const shuffled = [...hrQuestions].sort(() => Math.random() - 0.5).slice(0, 3);
+    setQuestions(shuffled);
+    setQuestionIdx(0);
+    setAnswering(false);
+    setTimeLeft(QUESTION_SECONDS);
+    setResult(null);
+
+    axios
+      .get(`${API}/start_exam`)
+      .then(() => setExamReady(true))
+      .catch((err) => {
+        setExamReady(false);
+        setToast(err?.response?.data?.message || "Exam requires completed calibration.");
+      });
+  }, [setToast]);
+
+  useEffect(() => {
+    if (!answering) return;
+    const t = setInterval(() => {
+      setTimeLeft((s) => Math.max(0, s - 1));
+    }, 1000);
+    return () => clearInterval(t);
+  }, [answering]);
+
+  const finalizeQuestion = useCallback(async () => {
+    try {
+      const res = await axios.get(`${API}/end_question`);
+      setResult(res.data);
+    } catch (err) {
+      setToast(err?.response?.data?.message || "Could not compute question result.");
+    } finally {
+      setAnswering(false);
+    }
+  }, [setToast]);
+
+  useEffect(() => {
+    if (!answering || timeLeft !== 0) return;
+    finalizeQuestion();
+  }, [answering, timeLeft, finalizeQuestion]);
+
+  const startAnswer = async () => {
+    setResult(null);
+    setTimeLeft(QUESTION_SECONDS);
+    try {
+      await axios.get(`${API}/start_question`);
+      setAnswering(true);
+    } catch (err) {
+      setToast(err?.response?.data?.message || "Could not start answer timer.");
+    }
+  };
+
+  const nextQuestion = () => {
+    setQuestionIdx((q) => Math.min(q + 1, 2));
+    setResult(null);
+    setTimeLeft(QUESTION_SECONDS);
+    setAnswering(false);
+  };
+
+  const finishExam = async () => {
+    try {
+      const res = await axios.get(`${API}/end_exam`);
+      setToast(`Final score ${res.data.score}/100 (${res.data.label})`);
+    } catch (err) {
+      setToast(err?.response?.data?.message || "Could not end exam.");
+    }
+  };
+
+  const q = questions[questionIdx];
+  const timer = useMemo(() => {
+    const mm = String(Math.floor(timeLeft / 60)).padStart(2, "0");
+    const ss = String(timeLeft % 60).padStart(2, "0");
+    return `${mm}:${ss}`;
+  }, [timeLeft]);
+
+  return (
+    <>
+      <div className="card">
+        <h3>Question {questionIdx + 1} / 3</h3>
+        <p>{q?.question || "Preparing questions..."}</p>
+      </div>
+
+      <div className="card">
+        <h3>Timer</h3>
+        <h1 className={`score-number ${timeLeft <= 20 && answering ? "critical" : "stable"}`}>{timer}</h1>
+        <div className="exam-controls">
+          <button className="exam-btn primary" onClick={startAnswer} disabled={!examReady || answering || Boolean(result)}>
+            Start Answer
+          </button>
+          <button className="exam-btn secondary" onClick={finalizeQuestion} disabled={!answering}>
+            End Now
+          </button>
         </div>
       </div>
-      <StatusPanel data={data} title="Posture Integrity" />
-      <StatsDashboard stats={data} />
-    </div>
-  </>
-);
 
-// --- COMPONENTS ---
-
-export const ActionDisplay = ({ action }) => (
-  <div className="card sidebar-card action-card-highlight">
-    <h3>AI Correction</h3>
-    <h2 className="highlight-text">{action || "Analyzing..."}</h2>
-    <p className="mini-desc">Real-time guidance from the RL model.</p>
-  </div>
-);
-
-export const StatusPanel = ({ data, title }) => {
-  const isGood = !data?.is_bad;
-  return (
-    <div className={`card sidebar-card ${isGood ? 'border-success' : 'border-danger'}`} style={{ flex: 1 }}>
-      <h3>{title || "Status"}</h3>
-      <h2 style={{ color: isGood ? '#3fb950' : '#f85149', margin: '10px 0' }}>
-        {isGood ? "✅ Interview Ready" : "⚠️ Fix Presence"}
-      </h2>
-      <div className="advice-box">
-        {isGood ? "Professional alignment detected. Maintain this level of poise." : "You appear to be slouching or off-center. Recenter for impact."}
+      <div className="card">
+        <h3>Live Suggestion</h3>
+        <div className="advice-box">{data?.suggestion || "Waiting..."}</div>
+        {data?.is_cheating ? <p style={{ color: "#f85149" }}>Eye contact lost.</p> : null}
       </div>
+
+      {result ? (
+        <div className="card">
+          <h3>Question Score</h3>
+          <h1 className={`score-number ${result.score < 70 ? "critical" : "stable"}`}>{result.score}/100</h1>
+          <p>{result.label}</p>
+          <div style={{ display: "grid", gap: 6 }}>
+            {(result.errors || []).map((e) => (
+              <div key={e.key} className="state-box">
+                {e.description} ({e.percent_frames}%)
+              </div>
+            ))}
+          </div>
+          <div className="exam-controls" style={{ marginTop: 10 }}>
+            {questionIdx < 2 ? (
+              <button className="exam-btn primary" onClick={nextQuestion}>Next Question</button>
+            ) : (
+              <button className="exam-btn primary" onClick={finishExam}>Finish Exam</button>
+            )}
+          </div>
+        </div>
+      ) : null}
+
+      <LiveTelemetry data={data} showScores />
+    </>
+  );
+}
+
+function LiveTelemetry({ data, showScores }) {
+  const isCalibrating = data?.mode === "calibrating";
+  return (
+    <div className="card">
+      <h3>RL Telemetry</h3>
+      <p>State: {Array.isArray(data?.state) ? data.state.join(" | ") : "N/A"}</p>
+      <p>Action: {data?.action || "N/A"}</p>
+      <p>Reward: {showScores && !isCalibrating ? (data?.reward ?? 0) : "N/A (before calibration)"}</p>
+      <p>Trust score: {showScores && !isCalibrating ? `${data?.trust_score ?? 0}%` : "N/A (before calibration)"}</p>
+      <p>Source: {data?.identified_by || "N/A"}</p>
     </div>
   );
-};
-
-export const InterviewPrompter = ({ idx, setIdx }) => {
-  const q = hrQuestions[idx];
-  const progress = ((idx + 1) / hrQuestions.length) * 100;
-  return (
-    <div className="card exam-card">
-      <div className="exam-header">
-        <span className="exam-tag">BEHAVIORAL Q {idx + 1} / {hrQuestions.length}</span>
-        <div className="exam-progress-bg"><div className="exam-progress-fill" style={{width: `${progress}%`}}></div></div>
-      </div>
-      <h2 className="exam-question-text">"{q.question}"</h2>
-      <div className="exam-controls">
-        <button onClick={() => setIdx(idx - 1)} disabled={idx === 0} className="exam-btn secondary">Prev</button>
-        <button onClick={() => setIdx(idx + 1)} disabled={idx === hrQuestions.length - 1} className="exam-btn primary">Next</button>
-      </div>
-    </div>
-  );
-};
-
-export const StatsDashboard = ({ stats }) => (
-  <div className="card sidebar-card" style={{ flex: 1 }}>
-    <h3>Poise Analytics</h3>
-    <p>Reward: <span style={{ color: stats.reward >= 0 ? '#3fb950' : '#f85149' }}>{stats.reward}</span></p>
-    <div className="vector-grid">
-      {stats.state?.map((s, i) => <div key={i} className="state-box">{s}</div>)}
-    </div>
-  </div>
-);
-
-export const VideoFeed = () => (
-  <img src="http://localhost:8000/video_feed" alt="Live Feed" className="video-element" />
-);
+}
 
 export default App;
-
-//App.jsx

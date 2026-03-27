@@ -46,7 +46,13 @@ current_rl_data = {
     "action": None,
     "reward": 0,
     "is_bad": False,
-    "identified_by": "Initializing..."
+    "is_cheating": False,
+    "trust_score": 0,
+    "identified_by": "Initializing...",
+    "mode": "idle",
+    "calibration_ready": False,
+    "face_inside_ratio": 0.0,
+    "suggestion": "Waiting to start..."
 }
 
 data_lock = threading.Lock()
@@ -55,7 +61,31 @@ data_lock = threading.Lock()
 # PROCTOR EXAM TRACKING
 # ---------------------------
 exam_active = False
+question_active = False
 posture_stats = {"good": 0, "bad": 0}
+
+# Per-question accumulators (reset on /start_question)
+question_stats = {
+    "good": 0,
+    "bad": 0,
+    "position_error": 0,
+    "head_error": 0,
+    "gaze_error": 0,
+    "reward_total": 0.0,
+    "reward_transitions": 0
+}
+
+question_last_state = None
+
+# ---------------------------
+# CALIBRATION STATE
+# ---------------------------
+latest_face_info = None
+latest_face_inside_ratio = 0.0
+CALIBRATION_CAPTURE_MIN_RATIO = 0.8
+calibration_frozen = False
+calibration_frozen_until = 0.0
+CALIBRATION_FREEZE_SECONDS = 1.5
 
 # ---------------------------
 # CAMERA THREAD
@@ -63,7 +93,10 @@ posture_stats = {"good": 0, "bad": 0}
 def camera_background_task():
     global cap, baseline, epsilon
     global current_frame, current_rl_data
-    global exam_active, posture_stats, camera_active
+    global exam_active, question_active, posture_stats
+    global question_stats, question_last_state
+    global latest_face_info, latest_face_inside_ratio
+    global calibration_frozen, calibration_frozen_until
 
     if cap is None:
         if sys.platform.startswith('darwin'):
@@ -76,8 +109,6 @@ def camera_background_task():
         if not cap.isOpened():
             raise RuntimeError('Cannot open webcam. Check camera permissions and device index.')
 
-    stable_count = 0
-    REQUIRED_STABLE_FRAMES = 15
     missing_face_count = 0
     MAX_MISSING_FRAMES = 60
 
@@ -85,6 +116,13 @@ def camera_background_task():
     frame_counter = 0
 
     while camera_active:
+        # Freeze the camera frames during manual calibration capture.
+        if calibration_frozen:
+            if time.time() < calibration_frozen_until:
+                time.sleep(0.05)
+                continue
+            calibration_frozen = False
+
         ret, frame = cap.read()
         if not ret:
             time.sleep(0.01)
@@ -102,10 +140,17 @@ def camera_background_task():
         action = None
         reward = 0
         ai_is_bad_posture = False
+        is_cheating = False
+        trust_score = 0
         identified_by = "Waiting for alignment..."
+        mode = "calibrating" if baseline is None else "posture"
+        calibration_ready = False
+        face_inside_ratio = 0.0
+        suggestion = "Align your face inside the circle."
 
-        # Draw default oval
-        cv2.ellipse(frame, center, axes, 0, 0, 360, (255, 255, 255), 2)
+        # Draw default oval only during manual calibration mode.
+        if baseline is None:
+            cv2.ellipse(frame, center, axes, 0, 0, 360, (255, 255, 255), 2)
 
         # ---------------------------
         # NO FACE
@@ -115,7 +160,6 @@ def camera_background_task():
 
             if missing_face_count > MAX_MISSING_FRAMES and baseline is not None:
                 baseline = None
-                stable_count = 0
                 print("🔄 User left → baseline reset")
 
             cv2.putText(frame, "No face detected", (10, 60),
@@ -129,36 +173,64 @@ def camera_background_task():
             is_inside, ratio = is_face_in_circle(info, center, radius)
 
             # ---------------------------
-            # AUTO CALIBRATION
+            # MANUAL CALIBRATION
             # ---------------------------
             if baseline is None:
-                identified_by = "Auto-Calibrating..."
+                mode = "calibrating"
+                face_inside_ratio = float(ratio)
+                calibration_ready = (face_inside_ratio >= CALIBRATION_CAPTURE_MIN_RATIO)
 
-                if ratio > 0.65:
-                    stable_count += 1
+                # Cache the candidate info for `/capture_reference`.
+                latest_face_info = info.copy()
+                latest_face_inside_ratio = face_inside_ratio
 
+                if calibration_ready:
+                    identified_by = "Capture Ready (green)"
+                    suggestion = "Ready. Click 'Capture Reference'."
                     cv2.ellipse(frame, center, axes, 0, 0, 360, (0, 255, 0), 2)
-
-                    if stable_count >= REQUIRED_STABLE_FRAMES:
-                        baseline = info.copy()
-                        print("✅ Calibration Done")
-
                 else:
-                    stable_count = max(0, stable_count - 1)
+                    identified_by = "Move face into circle"
+                    suggestion = "Move your face to the green zone (>80%)."
                     cv2.ellipse(frame, center, axes, 0, 0, 360, (0, 165, 255), 2)
 
+                cv2.putText(
+                    frame,
+                    f"Inside: {face_inside_ratio*100:.0f}%",
+                    (10, 90),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (255, 255, 255),
+                    2,
+                )
+
             # ---------------------------
-            # RL TRACKING
+            # RL TRACKING / EXAM MODE
             # ---------------------------
             else:
-                circle_color = (0, 255, 0) if is_inside else (0, 165, 255)
-                cv2.ellipse(frame, center, axes, 0, 0, 360, circle_color, 2)
+                mode = "exam_question" if question_active else ("exam" if exam_active else "posture")
 
                 rl_state = build_state(info, baseline)
 
                 if rl_state:
                     # Detect posture
                     ai_is_bad_posture = is_bad_state(rl_state)
+
+                    # Frontend proctor UI expects `is_cheating` to reflect eye-contact/gaze loss.
+                    # `build_state` returns (position, head, gaze) where gaze is "looking" or "away".
+                    gaze = rl_state[2]
+                    is_cheating = gaze != "looking"
+
+                    position, head, gaze = rl_state
+
+                    # Human-readable suggestion (used in the UI).
+                    if position != "centered":
+                        suggestion = "Center your face in the frame."
+                    elif head != "straight":
+                        suggestion = "Keep your head straight."
+                    elif gaze != "looking":
+                        suggestion = "Look at the camera/screen."
+                    else:
+                        suggestion = "Good posture. Stay steady."
 
                     # Identify source
                     if rl_state in Q and np.any(Q[rl_state]):
@@ -170,14 +242,10 @@ def camera_background_task():
                     action_index = choose_action(rl_state, epsilon)
                     action = actions[action_index]
 
-                    # ---------------------------
-                    # ✅ FIXED RL TRANSITION
-                    # ---------------------------
+                    # RL update (Q-learning)
                     if last_state is not None:
                         reward = reward_for_transition(last_state, rl_state)
-
                         next_max = max(Q[rl_state]) if rl_state in Q else 0
-
                         Q[last_state][action_index] += alpha * (
                             reward + gamma * next_max - Q[last_state][action_index]
                         )
@@ -187,24 +255,57 @@ def camera_background_task():
                     epsilon = max(min_epsilon, epsilon * epsilon_decay)
 
                     # ---------------------------
-                    # PROCTOR TRACKING
+                    # QUESTION SCORING
                     # ---------------------------
-                    if exam_active:
+                    if question_active:
+                        if ai_is_bad_posture:
+                            question_stats["bad"] += 1
+                        else:
+                            question_stats["good"] += 1
+
+                        if position != "centered":
+                            question_stats["position_error"] += 1
+                        if head != "straight":
+                            question_stats["head_error"] += 1
+                        if gaze != "looking":
+                            question_stats["gaze_error"] += 1
+
+                        if question_last_state is not None:
+                            q_reward = reward_for_transition(question_last_state, rl_state)
+                            question_stats["reward_total"] += float(q_reward)
+                            question_stats["reward_transitions"] += 1
+
+                        question_last_state = rl_state
+
+                    # ---------------------------
+                    # OVERALL EXAM TRUST (accumulate only while answering)
+                    # ---------------------------
+                    if question_active:
                         if ai_is_bad_posture:
                             posture_stats["bad"] += 1
                         else:
                             posture_stats["good"] += 1
 
-                # UI
+                # UI overlays for training/exam
                 cv2.putText(frame, f"State: {rl_state}", (10, 60),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
                 cv2.putText(frame, f"Action: {action}", (10, 90),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
+                cv2.putText(frame, f"{suggestion}", (10, 130),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 255, 200), 2)
+
                 if ai_is_bad_posture:
-                    cv2.putText(frame, "FIX POSTURE!", (10, 130),
+                    cv2.putText(frame, "FIX POSTURE!", (10, 170),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+
+        # Derived proctor metrics for the frontend (do not change RL/Q logic).
+        if exam_active:
+            total = posture_stats["good"] + posture_stats["bad"]
+            trust_score = int((posture_stats["good"] / total) * 100) if total > 0 else 0
+        else:
+            trust_score = 0
 
         # Save Q periodically
         frame_counter += 1
@@ -223,7 +324,13 @@ def camera_background_task():
                 "action": action,
                 "reward": reward,
                 "is_bad": bool(ai_is_bad_posture),
-                "identified_by": identified_by
+                "is_cheating": bool(is_cheating),
+                "trust_score": trust_score,
+                "identified_by": identified_by,
+                "mode": mode,
+                "calibration_ready": calibration_ready,
+                "face_inside_ratio": face_inside_ratio,
+                "suggestion": suggestion,
             }
 
 
@@ -251,37 +358,147 @@ def get_state():
 
 @app.route("/start_exam")
 def start_exam():
-    global exam_active, posture_stats, camera_thread, camera_active
+    global exam_active, question_active, posture_stats, camera_thread, camera_active
+    global question_stats, question_last_state
+    global calibration_frozen
+
+    if baseline is None:
+        return jsonify({"status": "error", "message": "Please complete calibration first."}), 400
+
     exam_active = True
+    question_active = False
     posture_stats = {"good": 0, "bad": 0}
-    
+
+    question_stats = {
+        "good": 0,
+        "bad": 0,
+        "position_error": 0,
+        "head_error": 0,
+        "gaze_error": 0,
+        "reward_total": 0.0,
+        "reward_transitions": 0,
+    }
+    question_last_state = None
+
+    calibration_frozen = False
+
     if not camera_active:
         camera_active = True
         camera_thread = threading.Thread(target=camera_background_task, daemon=True)
         camera_thread.start()
         print("📹 Camera started")
-    
+
     print("🎯 Exam started")
     return jsonify({"status": "started"})
 
 
+@app.route("/start_question")
+def start_question():
+    global question_active, exam_active
+    global question_stats, question_last_state
+    global camera_thread, camera_active
+
+    if baseline is None:
+        return jsonify({"status": "error", "message": "Calibration missing. Capture reference first."}), 400
+
+    exam_active = True
+    question_active = True
+    question_stats = {
+        "good": 0,
+        "bad": 0,
+        "position_error": 0,
+        "head_error": 0,
+        "gaze_error": 0,
+        "reward_total": 0.0,
+        "reward_transitions": 0,
+    }
+    question_last_state = None
+
+    if not camera_active:
+        camera_active = True
+        camera_thread = threading.Thread(target=camera_background_task, daemon=True)
+        camera_thread.start()
+        print("📹 Camera started")
+
+    return jsonify({"status": "question_started"})
+
+
+@app.route("/end_question")
+def end_question():
+    global question_active, question_stats, question_last_state
+
+    if not question_active:
+        return jsonify({"status": "error", "message": "No active question."}), 400
+
+    question_active = False
+    question_last_state = None
+
+    good_frames = question_stats["good"]
+    bad_frames = question_stats["bad"]
+    total_frames = good_frames + bad_frames
+    score = int((good_frames / total_frames) * 100) if total_frames > 0 else 0
+
+    # Error breakdown (frame-based)
+    def err_pct(count):
+        return round((count / total_frames) * 100, 1) if total_frames > 0 else 0.0
+
+    errors = []
+    if question_stats["position_error"] > 0:
+        errors.append({
+            "key": "position",
+            "description": "Face not centered (off-center posture).",
+            "count_frames": question_stats["position_error"],
+            "percent_frames": err_pct(question_stats["position_error"]),
+        })
+    if question_stats["head_error"] > 0:
+        errors.append({
+            "key": "head",
+            "description": "Head not straight (tilted posture).",
+            "count_frames": question_stats["head_error"],
+            "percent_frames": err_pct(question_stats["head_error"]),
+        })
+    if question_stats["gaze_error"] > 0:
+        errors.append({
+            "key": "gaze",
+            "description": "Gaze away from camera (eye contact lost).",
+            "count_frames": question_stats["gaze_error"],
+            "percent_frames": err_pct(question_stats["gaze_error"]),
+        })
+
+    # Provide at least one error line for UI consistency.
+    if not errors:
+        errors = [{
+            "key": "none",
+            "description": "No posture/gaze errors detected during this interval.",
+            "count_frames": 0,
+            "percent_frames": 0.0,
+        }]
+
+    label = "Excellent" if score > 80 else ("Good" if score > 60 else ("Average" if score > 40 else "Poor"))
+
+    return jsonify({
+        "status": "question_ended",
+        "score": score,
+        "label": label,
+        "good_frames": good_frames,
+        "bad_frames": bad_frames,
+        "reward_total": question_stats["reward_total"],
+        "reward_transitions": question_stats["reward_transitions"],
+        "errors": errors
+    })
+
+
 @app.route("/end_exam")
 def end_exam():
-    global exam_active, posture_stats
+    global exam_active, question_active, posture_stats, camera_active
 
     exam_active = False
+    question_active = False
 
     total = posture_stats["good"] + posture_stats["bad"]
     score = int((posture_stats["good"] / total) * 100) if total > 0 else 0
 
-    if score > 80:
-        label = "Excellent"
-    elif score > 60:
-        label = "Good"
-    elif score > 40:
-        label = "Average"
-    else:
-        label = "Poor"
+    label = "Excellent" if score > 80 else ("Good" if score > 60 else ("Average" if score > 40 else "Poor"))
 
     print(f"📊 Final Score: {score}%")
 
@@ -296,7 +513,10 @@ def end_exam():
 @app.route("/stop_session")
 def stop_session():
     global camera_active, cap, camera_thread
+    global exam_active, question_active
     camera_active = False
+    exam_active = False
+    question_active = False
     
     if cap:
         cap.release()
@@ -311,9 +531,77 @@ def stop_session():
 
 @app.route("/calibrate")
 def calibrate():
-    global baseline
-    baseline = None  # Reset baseline to trigger calibration
+    global baseline, latest_face_info, latest_face_inside_ratio
+    global calibration_frozen, calibration_frozen_until
+    global exam_active, question_active, posture_stats
+    global question_stats, question_last_state
+
+    baseline = None
+    latest_face_info = None
+    latest_face_inside_ratio = 0.0
+
+    calibration_frozen = False
+    calibration_frozen_until = 0.0
+
+    # Calibration and exam should not overlap.
+    exam_active = False
+    question_active = False
+    posture_stats = {"good": 0, "bad": 0}
+    question_stats = {
+        "good": 0,
+        "bad": 0,
+        "position_error": 0,
+        "head_error": 0,
+        "gaze_error": 0,
+        "reward_total": 0.0,
+        "reward_transitions": 0,
+    }
+    question_last_state = None
+
     return jsonify({"status": "calibration_reset"})
+
+
+@app.route("/capture_reference")
+def capture_reference():
+    global baseline, latest_face_info, latest_face_inside_ratio
+    global calibration_frozen, calibration_frozen_until
+    global exam_active, question_active
+
+    if baseline is not None:
+        return jsonify({"status": "error", "message": "Calibration already captured."}), 400
+
+    if latest_face_info is None:
+        return jsonify({"status": "error", "message": "No face candidate available. Move into the circle."}), 400
+
+    if latest_face_inside_ratio < CALIBRATION_CAPTURE_MIN_RATIO:
+        return jsonify({
+            "status": "error",
+            "message": f"Move face into green zone (> {int(CALIBRATION_CAPTURE_MIN_RATIO*100)}%).",
+            "face_inside_ratio": latest_face_inside_ratio
+        }), 400
+
+    baseline = latest_face_info.copy()
+    # Freeze camera briefly so the UI sees a stable calibration moment.
+    calibration_frozen = True
+    calibration_frozen_until = time.time() + CALIBRATION_FREEZE_SECONDS
+
+    # If someone tries capturing during an exam, stop scoring.
+    question_active = False
+    exam_active = False
+
+    calibration = {
+        "face_x": baseline.get("face_x"),
+        "face_y": baseline.get("face_y"),
+        "face_w": baseline.get("face_w"),
+        "face_h": baseline.get("face_h"),
+        "head_angle": baseline.get("head_angle"),
+        "eye_dir": baseline.get("eye_dir"),
+        "eye_ratio": baseline.get("eye_ratio"),
+        "eye_dist": baseline.get("eye_dist"),
+    }
+
+    print("✅ Calibration captured:", calibration)
+    return jsonify({"status": "captured", "calibration": calibration})
 
 
 @app.route("/video_feed")
