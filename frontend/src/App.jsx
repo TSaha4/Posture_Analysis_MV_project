@@ -165,15 +165,14 @@ function WelcomeScreen({ setScreen }) {
   return (
     <div className="welcome-screen">
       <div className="welcome-backdrop" />
+      <div className="welcome-aura aura-left" />
+      <div className="welcome-aura aura-right" />
       <div className="welcome-panel">
-        <div className="welcome-copy">
-          <p className="eyebrow">Interview intelligence workspace</p>
-          <h2>Run calibration first, then move into a polished live interview dashboard.</h2>
-          <p className="hero-subtitle">
-            This interface combines the camera stream, posture telemetry, timers, guidance, and scoring into a cleaner
-            control-room layout inspired by the design reference you shared.
-          </p>
-          <div className="hero-actions">
+        <section className="welcome-card">
+          <p className="welcome-badge">Posture Analysis Studio</p>
+          <h2>Calibrate. Start. Shine.</h2>
+          <p className="hero-subtitle">Professional mock interviews with clean live posture feedback.</p>
+          <div className="hero-actions welcome-actions">
             <button className="primary-btn" onClick={() => setScreen("calibration")}>
               Open Calibration
             </button>
@@ -181,26 +180,17 @@ function WelcomeScreen({ setScreen }) {
               Open Interview
             </button>
           </div>
-        </div>
-
-        <div className="preview-card">
-          <div className="preview-topbar">
-            <span />
-            <span />
-            <span />
-          </div>
-          <div className="preview-layout">
-            <div className="preview-sidebar" />
-            <div className="preview-main">
-              <div className="preview-video" />
-              <div className="preview-panels">
-                <div className="preview-block tall" />
-                <div className="preview-block" />
-                <div className="preview-block" />
-              </div>
+          <div className="welcome-meta">
+            <div className="meta-pill">
+              <span className="meta-dot success" />
+              Live Guidance
+            </div>
+            <div className="meta-pill">
+              <span className="meta-dot warm" />
+              Real-time Score
             </div>
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );
