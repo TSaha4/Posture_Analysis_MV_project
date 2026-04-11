@@ -87,7 +87,8 @@ current_state_data = {
     "head": None,
     "gaze": None,
     "identified_by": "Machine Vision Rules",
-    "trust_score": 0,
+    "trust_score": 100,
+    "reward": 0,
     "is_cheating": False,
     "action": None,
     "state": None,
@@ -95,20 +96,22 @@ current_state_data = {
 
 
 def time_score_for_elapsed(elapsed_seconds):
-    if elapsed_seconds < 10:
+    if elapsed_seconds < 5:
         return 0
+    if elapsed_seconds < 10:
+        return 10
     if elapsed_seconds < 20:
-        return 20
+        return 25
     if elapsed_seconds < 30:
-        return 35
+        return 40
     if elapsed_seconds < 45:
-        return 50
+        return 55
     if elapsed_seconds < 60:
-        return 65
+        return 70
     if elapsed_seconds < 90:
-        return 80
+        return 82
     if elapsed_seconds < 120:
-        return 90
+        return 92
     return 100
 
 
@@ -120,6 +123,14 @@ def label_for_score(score):
     if score >= 40:
         return "Average"
     return "Poor"
+
+
+def draw_dashed_ellipse(frame, center, axes, color, thickness=1, dash=10, gap=8):
+    angle = 0
+    while angle < 360:
+      dash_end = min(angle + dash, 360)
+      cv2.ellipse(frame, center, axes, 0, angle, dash_end, color, thickness, cv2.LINE_AA)
+      angle += dash + gap
 
 
 def smooth_state(raw_state, required_frames=3):
@@ -248,7 +259,8 @@ def camera_loop():
         suggestion = "Align face in the frame."
         state = None
         action = None
-        trust_score = 0
+        trust_score = 100
+        reward = 0
         is_cheating = False
         movement = 0.0
         movement_label = "low"
@@ -262,14 +274,14 @@ def camera_loop():
         calibration_ready = False
 
         if baseline is None:
-            cv2.ellipse(frame, center, axes, 0, 0, 360, (255, 255, 255), 2)
+            draw_dashed_ellipse(frame, center, axes, (0, 165, 255), thickness=1)
 
         if info and baseline is None:
             _, face_inside_ratio = is_face_in_circle(info, center, radius, ellipse_axes=axes)
             calibration_ready = face_inside_ratio >= 0.5
             suggestion = "Ready to capture reference." if calibration_ready else "Move your face inside the oval."
             oval_color = (0, 255, 0) if calibration_ready else (0, 165, 255)
-            cv2.ellipse(frame, center, axes, 0, 0, 360, oval_color, 3)
+            draw_dashed_ellipse(frame, center, axes, oval_color, thickness=1)
             prev_face_center = (float(info["face_x"]), float(info["face_y"]))
             gaze_away_counter = 0
         elif info and baseline:
@@ -300,7 +312,7 @@ def camera_loop():
                     suggestion = "Adjust posture."
                 else:
                     suggestion = "Good posture"
-                if exam_active:
+                if exam_active and question_active:
                     if posture_is_good:
                         posture_stats["good"] += 1
                     else:
@@ -311,17 +323,34 @@ def camera_loop():
                     else:
                         question_stats["bad"] = question_stats.get("bad", 0) + 1
                 total = posture_stats["good"] + posture_stats["bad"]
-                trust_score = int((posture_stats["good"] / total) * 100) if total > 0 else 0
+                question_total = question_stats.get("good", 0) + question_stats.get("bad", 0)
+                if question_total > 0:
+                    trust_score = int((question_stats.get("good", 0) / question_total) * 100)
+                else:
+                    trust_score = int((posture_stats["good"] / total) * 100) if total > 0 else 100
+                if action == "no_action":
+                    reward = 1
+                elif action == "reduce_movement":
+                    reward = -1
+                elif action in ("adjust_posture", "look_screen"):
+                    reward = -0.6
         elif baseline is not None:
             suggestion = "Face not detected."
             action = "look_screen"
+            reward = -1
             is_cheating = True
             prev_face_center = None
             gaze_away_counter = 0
-            if exam_active:
+            if exam_active and question_active:
                 posture_stats["bad"] += 1
             if question_active:
                 question_stats["bad"] = question_stats.get("bad", 0) + 1
+            total = posture_stats["good"] + posture_stats["bad"]
+            question_total = question_stats.get("good", 0) + question_stats.get("bad", 0)
+            if question_total > 0:
+                trust_score = int((question_stats.get("good", 0) / question_total) * 100)
+            else:
+                trust_score = int((posture_stats["good"] / total) * 100) if total > 0 else 100
 
         debug_overlay = frame.copy()
         debug_overlay[edges > 0] = (255, 255, 255)
@@ -337,13 +366,8 @@ def camera_loop():
             box_color = (0, 255, 0) if action in (None, "no_action") else (0, 165, 255)
             if action in ("look_screen", "reduce_movement"):
                 box_color = (0, 0, 255)
-            cv2.rectangle(frame, (fx, fy), (fx + fw, fy + fh), box_color, 2)
+            cv2.rectangle(frame, (fx, fy), (fx + fw, fy + fh), box_color, 1)
             cv2.circle(frame, (int(info["face_x"]), int(info["face_y"])), 4, box_color, -1)
-
-        overlay_state = " | ".join(state) if state else "calibrating" if baseline is None else "no_face"
-        cv2.putText(frame, f"MV: {overlay_state}", (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
-        cv2.putText(frame, f"Suggestion: {action or 'N/A'}", (12, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 2, cv2.LINE_AA)
-        cv2.putText(frame, f"Movement: {movement_label} ({movement:.1f})", (12, 82), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 2, cv2.LINE_AA)
 
         _, buffer = cv2.imencode('.jpg', frame)
         position = state[0] if state else None
@@ -380,6 +404,7 @@ def camera_loop():
                 "calibration_snapshot": calibration_snapshot,
                 "identified_by": "Machine Vision Rules",
                 "trust_score": trust_score,
+                "reward": reward,
                 "is_cheating": is_cheating,
             }
 
@@ -531,7 +556,7 @@ def end_question():
     posture_score = round(max(0.0, 100.0 - penalty_error_percent), 1)
     time_score = float(time_score_for_elapsed(elapsed_time))
     time_penalty = round(max(0.0, 100.0 - time_score), 1)
-    score = round(max(0.0, 100.0 - (penalty_error_percent * 0.7) - (time_penalty * 0.3)), 1)
+    score = round(max(0.0, (posture_score * 0.25) + (time_score * 0.75)), 1)
     label = label_for_score(score)
     errors = []
 
