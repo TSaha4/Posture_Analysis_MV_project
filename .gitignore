@@ -2,6 +2,7 @@
 .venv/
 venv/
 env/
+myenv/        # <-- ADD THIS (important)
 
 # 🔥 Python cache
 __pycache__/
@@ -26,9 +27,17 @@ yarn-error.log*
 # 🔥 Model / runtime files
 *.pkl
 
+# 🔥 Frontend (React/Vite)
+node_modules/   # <-- ADD THIS
+dist/           # build output
+build/
+
+# 🔥 Environment variables
+.env
+
 # 🔥 VS Code
 .vscode/
 
 # 🔥 OS junk
 .DS_Store
-Thumbs.db
+Thumbs.dbc
