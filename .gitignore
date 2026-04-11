@@ -2,6 +2,7 @@
 .venv/
 venv/
 env/
+myenv/        # <-- ADD THIS (important)
 
 # 🔥 Python cache
 __pycache__/
@@ -11,6 +12,14 @@ __pycache__/
 
 # 🔥 Model / runtime files
 *.pkl
+
+# 🔥 Frontend (React/Vite)
+node_modules/   # <-- ADD THIS
+dist/           # build output
+build/
+
+# 🔥 Environment variables
+.env
 
 # 🔥 VS Code
 .vscode/

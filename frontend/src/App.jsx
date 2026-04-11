@@ -49,109 +49,207 @@ function App() {
 
   useEffect(() => {
     if (screen !== "calibration") return;
-    // Always start calibration in a clean state so capture can become active.
     axios
       .get(`${API}/calibrate`)
       .catch((err) => console.debug("calibrate on enter failed:", err?.message));
   }, [screen]);
 
   if (screen === "home") {
-    return (
-      <div className="welcome-screen">
-        <div className="bg-glow blue" />
-        <div className="bg-glow purple" />
-        <div className="hero-section">
-          <div className="badge-chip">RL Interview Pipeline</div>
-          <h2 className="glitch-text">Calibration + Timed Exam</h2>
-          <p className="hero-subtitle">
-            Capture a strict calibration reference first, then run a timed 3-question mock interview with live posture scoring.
-          </p>
-
-          <div className="mode-selector-grid">
-            <div className="glass-morphism mode-card" onClick={() => setScreen("calibration")}>
-              <div className="icon-wrapper">🎯</div>
-              <h3>Calibration Room</h3>
-              <p>Align face in circle, capture reference, freeze frame, start posture baseline.</p>
-              <button className="start-btn posture-btn">Go to Calibration</button>
-            </div>
-
-            <div className="glass-morphism mode-card" onClick={() => setScreen("exam")}>
-              <div className="icon-wrapper">🛡️</div>
-              <h3>Exam Room</h3>
-              <p>Random 3 questions, 3 minutes each, start-answer timer, score with posture errors.</p>
-              <button className="start-btn proctor-btn">Go to Exam</button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
+    return <WelcomeScreen setScreen={setScreen} />;
   }
 
   return (
-    <div className="container">
-      <header className="header">
-        <div className="header-title">
-          <h1>{screen === "calibration" ? "🎯 Calibration Room" : "🛡️ Exam Room"}</h1>
-          <span className="status-badge active">Backend: {data?.mode || "loading"}</span>
-        </div>
-        <div className="exam-controls">
-          <button className="exam-btn secondary" onClick={() => setScreen(screen === "calibration" ? "exam" : "calibration")}>
-            {screen === "calibration" ? "Go Exam" : "Go Calibration"}
-          </button>
-          <button className="toggle-btn btn-danger" onClick={leaveSession}>
-            End Session
-          </button>
-        </div>
-      </header>
-
-      {toast?.message ? <div className={`toast-banner ${toast.type || "info"}`}>{toast.message}</div> : null}
-
-      <div className="main-content">
-        <div className="left-panel">
-          <div className="video-frame-container full-height">
-            {screen === "exam" ? (
-              <div className="camera-progress-shell">
-                <div className="camera-progress-fill" style={{ width: `${examProgress}%` }} />
-              </div>
-            ) : null}
-            {screen === "calibration" && data?.calibration_frozen ? (
-              <div className="camera-freeze-overlay">
-                <div className="freeze-spinner" />
-                <p>Locking reference... {data.calibration_freeze_remaining?.toFixed(1)}s</p>
-              </div>
-            ) : null}
-            <img
-              key={screen}
-              src={streamSrc}
-              alt="Live Feed"
-              className="video-element"
-            />
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark">PA</div>
+          <div>
+            <p className="eyebrow">Realtime Suite</p>
+            <h1>PostureAI</h1>
           </div>
         </div>
 
-        <div className="dashboard-sidebar">
-          {!backendOnline ? (
-            <div className="card">
-              <h3>Backend status</h3>
-              <p>Backend seems offline or not responding.</p>
-              <p style={{ opacity: 0.85 }}>
-                Start the backend on port 8000, then reload this page.
-              </p>
+        <div className="nav-group">
+          <p className="nav-label">Workspace</p>
+          <button className="nav-item" onClick={() => setScreen("home")}>
+            <span className="nav-icon">H</span>
+            Overview
+          </button>
+          <button
+            className={`nav-item ${screen === "calibration" ? "active" : ""}`}
+            onClick={() => setScreen("calibration")}
+          >
+            <span className="nav-icon">C</span>
+            Calibration
+          </button>
+          <button
+            className={`nav-item ${screen === "exam" ? "active" : ""}`}
+            onClick={() => setScreen("exam")}
+          >
+            <span className="nav-icon">I</span>
+            Interview
+          </button>
+        </div>
+
+        <div className="nav-group">
+          <p className="nav-label">Session</p>
+          <div className="sidebar-summary card-soft">
+            <span className={`status-dot ${backendOnline ? "online" : "offline"}`} />
+            <div>
+              <strong>{backendOnline ? "Backend connected" : "Backend offline"}</strong>
+              <p>{data?.mode || "waiting"}</p>
             </div>
-          ) : null}
-          {screen === "calibration" ? (
-            <CalibrationPanel data={data} showToast={showToast} />
-          ) : (
-            <ExamPanel
+          </div>
+        </div>
+
+        <button className="logout-btn" onClick={leaveSession}>
+          End Session
+        </button>
+      </aside>
+
+      <main className="workspace">
+        <header className="workspace-header">
+          <div>
+            <p className="eyebrow">{screen === "calibration" ? "Calibration studio" : "Interview control room"}</p>
+            <h2>{screen === "calibration" ? "Reference Capture & Alignment" : "Mock Interview Performance"}</h2>
+          </div>
+          <div className="workspace-actions">
+            <div className={`pill-status ${backendOnline ? "success" : "danger"}`}>
+              {backendOnline ? "Live Feed Ready" : "Waiting for Backend"}
+            </div>
+            <button
+              className="ghost-btn"
+              onClick={() => setScreen(screen === "calibration" ? "exam" : "calibration")}
+            >
+              {screen === "calibration" ? "Go to Interview" : "Go to Calibration"}
+            </button>
+          </div>
+        </header>
+
+        {toast?.message ? <div className={`toast-banner ${toast.type || "info"}`}>{toast.message}</div> : null}
+
+        <div className="dashboard-grid">
+          <section className="content-column">
+            <SessionHero
+              screen={screen}
               data={data}
-              showToast={showToast}
-              setExamProgress={setExamProgress}
-              onFinishSession={finishAndLeaveSession}
+              streamSrc={streamSrc}
+              examProgress={examProgress}
             />
-          )}
+
+            <div className="below-camera-scroll">
+              {screen === "calibration" ? (
+                <CalibrationPanel data={data} showToast={showToast} />
+              ) : (
+                <ExamPanel
+                  data={data}
+                  showToast={showToast}
+                  setExamProgress={setExamProgress}
+                  onFinishSession={finishAndLeaveSession}
+                />
+              )}
+            </div>
+          </section>
+
+          <aside className="insight-column">
+            <Scoreboard data={data} screen={screen} />
+            <ConversationPanel data={data} screen={screen} />
+          </aside>
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function WelcomeScreen({ setScreen }) {
+  return (
+    <div className="welcome-screen">
+      <div className="welcome-backdrop" />
+      <div className="welcome-panel">
+        <div className="welcome-copy">
+          <p className="eyebrow">Interview intelligence workspace</p>
+          <h2>Run calibration first, then move into a polished live interview dashboard.</h2>
+          <p className="hero-subtitle">
+            This interface combines the camera stream, posture telemetry, timers, guidance, and scoring into a cleaner
+            control-room layout inspired by the design reference you shared.
+          </p>
+          <div className="hero-actions">
+            <button className="primary-btn" onClick={() => setScreen("calibration")}>
+              Open Calibration
+            </button>
+            <button className="ghost-btn" onClick={() => setScreen("exam")}>
+              Open Interview
+            </button>
+          </div>
+        </div>
+
+        <div className="preview-card">
+          <div className="preview-topbar">
+            <span />
+            <span />
+            <span />
+          </div>
+          <div className="preview-layout">
+            <div className="preview-sidebar" />
+            <div className="preview-main">
+              <div className="preview-video" />
+              <div className="preview-panels">
+                <div className="preview-block tall" />
+                <div className="preview-block" />
+                <div className="preview-block" />
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
+  );
+}
+
+function SessionHero({ screen, data, streamSrc, examProgress }) {
+  const badgeText = screen === "calibration" ? "Calibration Live" : "Interview Live";
+  const subtext =
+    screen === "calibration"
+      ? "Align the face inside the frame and capture a clean reference."
+      : data?.suggestion || "Maintain eye contact and continue your answer with steady posture.";
+
+  return (
+    <section className="hero-card">
+      <div className="hero-card-header">
+        <div>
+          <p className="eyebrow">People attending the call</p>
+          <h3>Candidate View</h3>
+        </div>
+      </div>
+
+      <div className="video-stage">
+        {screen === "exam" ? (
+          <div className="camera-progress-shell">
+            <div className="camera-progress-fill" style={{ width: `${examProgress}%` }} />
+          </div>
+        ) : null}
+        {screen === "calibration" && data?.calibration_frozen ? (
+          <div className="camera-freeze-overlay">
+            <div className="freeze-spinner" />
+            <p>Locking reference... {data.calibration_freeze_remaining?.toFixed(1)}s</p>
+          </div>
+        ) : null}
+        <img key={screen} src={streamSrc} alt="Live Feed" className="video-element" />
+
+        <div className="video-caption">
+          <div className="recording-pill">Session Active</div>
+        </div>
+
+      </div>
+
+      <div className="live-brief">
+        <div className="wave-mark" />
+        <div>
+          <p className="eyebrow">Conversation now</p>
+          <strong>{subtext}</strong>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -161,6 +259,7 @@ function CalibrationPanel({ data, showToast }) {
   const isCalibrating = data?.mode === "calibrating" || data?.mode === "calibration_freeze";
   const snapshot = data?.calibration_snapshot;
   const freezeActive = Boolean(data?.calibration_frozen);
+  const alignmentHealth = Math.min(100, Math.max(0, ratioPct));
 
   const resetCalibration = async () => {
     try {
@@ -182,57 +281,69 @@ function CalibrationPanel({ data, showToast }) {
 
   return (
     <>
-      <div className="card">
-        <h3>Calibration Status</h3>
-        {isCalibrating ? (
-          <>
-            <p>Face inside oval: <strong>{ratioPct}%</strong></p>
-            <p>Capture rule: minimum 50%</p>
-            <p>Freeze status: <strong>{freezeActive ? `Locking (${data?.calibration_freeze_remaining?.toFixed(1)}s)` : "Idle"}</strong></p>
-            <p>Ready: <strong>{ready ? "Yes" : "No"}</strong></p>
-            <p>Face Width: {Math.round(data?.face_width || 0)}</p>
-            <p>Face Height: {Math.round(data?.face_height || 0)}</p>
-            <p>Head Angle: {(data?.head_angle ?? 0).toFixed(2)}</p>
-            <p>Eye Direction: {(data?.eye_dir ?? 0).toFixed(2)}</p>
-            <p>Eye Ratio: {(data?.eye_ratio ?? 0).toFixed(2)}</p>
-            <p>Eye Distance: {(data?.eye_distance ?? 0).toFixed(2)}</p>
-          </>
-        ) : (
-          <p style={{ color: "#f2c94c" }}>
-            Click <strong>Reset</strong> to return to calibration mode.
-          </p>
-        )}
-        <p>Mode: <strong>{data?.mode || "loading"}</strong></p>
-      </div>
+      <section className="panel-grid two-up">
+        <InfoCard
+          title="Alignment score"
+          value={`${alignmentHealth}%`}
+          subtitle={ready ? "Ready to capture" : "Keep face inside the oval"}
+        >
+          <ProgressBar value={alignmentHealth} tone="violet" />
+        </InfoCard>
+        <InfoCard
+          title="Freeze state"
+          value={freezeActive ? "Locking" : "Idle"}
+          subtitle={freezeActive ? `${data?.calibration_freeze_remaining?.toFixed(1)}s remaining` : "Awaiting capture"}
+        >
+          <ProgressBar value={freezeActive ? 100 : 24} tone="amber" />
+        </InfoCard>
+      </section>
 
-      {snapshot ? (
-        <div className="card">
-          <h3>Captured Reference Ratios</h3>
-          <p>Face Width: {Math.round(snapshot.face_w || 0)}</p>
-          <p>Face Height: {Math.round(snapshot.face_h || 0)}</p>
-          <p>Head Angle: {(snapshot.head_angle ?? 0).toFixed(2)}</p>
-          <p>Eye Direction: {(snapshot.eye_dir ?? 0).toFixed(2)}</p>
-          <p>Eye Ratio: {(snapshot.eye_ratio ?? 0).toFixed(2)}</p>
-          <p>Eye Distance: {(snapshot.eye_dist ?? 0).toFixed(2)}</p>
+      <section className="module-card">
+        <div className="module-header">
+          <div>
+            <p className="eyebrow">Calibration controls</p>
+            <h3>Reference capture workflow</h3>
+          </div>
+          <div className={`pill-status ${ready ? "success" : "warning"}`}>{ready ? "Reference Eligible" : "Needs Alignment"}</div>
         </div>
-      ) : null}
 
-      <div className="card">
-        <h3>Controls</h3>
-        <div className="exam-controls">
-          <button className="exam-btn secondary" onClick={resetCalibration}>Reset</button>
-          <button className="exam-btn primary" onClick={captureReference} disabled={!ready || !isCalibrating}>
+        <div className="detail-grid">
+          <Metric label="Mode" value={data?.mode || "loading"} />
+          <Metric label="Face in oval" value={`${ratioPct}%`} />
+          <Metric label="Head angle" value={(data?.head_angle ?? 0).toFixed(2)} />
+          <Metric label="Eye direction" value={(data?.eye_dir ?? 0).toFixed(2)} />
+          <Metric label="Eye ratio" value={(data?.eye_ratio ?? 0).toFixed(2)} />
+          <Metric label="Eye distance" value={(data?.eye_distance ?? 0).toFixed(2)} />
+        </div>
+
+        <div className="module-actions">
+          <button className="ghost-btn" onClick={resetCalibration}>
+            Reset
+          </button>
+          <button className="primary-btn" onClick={captureReference} disabled={!ready || !isCalibrating}>
             Capture Reference
           </button>
         </div>
-      </div>
+      </section>
 
-      <div className="card">
-        <h3>Live Suggestion</h3>
-        <div className="advice-box">{data?.suggestion || "Waiting for camera data..."}</div>
-      </div>
+      <section className="panel-grid two-up">
+        <InfoCard
+          title="Live suggestion"
+          value="Coach note"
+          subtitle={data?.suggestion || "Waiting for camera data..."}
+        />
+        <InfoCard
+          title="Captured snapshot"
+          value={snapshot ? "Available" : "Pending"}
+          subtitle={
+            snapshot
+              ? `Face ${Math.round(snapshot.face_w || 0)} x ${Math.round(snapshot.face_h || 0)}`
+              : "No reference captured yet"
+          }
+        />
+      </section>
 
-      <LiveTelemetry data={data} showScores={!isCalibrating} />
+      <TelemetryPanel data={data} showScores={!isCalibrating} />
     </>
   );
 }
@@ -356,9 +467,10 @@ function ExamPanel({ data, showToast, setExamProgress, onFinishSession }) {
   const finishExam = async () => {
     try {
       const res = await axios.get(`${API}/end_exam`);
-      const scoreText = res.data.time_penalty > 0 
-        ? `Final score ${res.data.score}/100 (${res.data.label}) - Base: ${res.data.base_score}%, Time penalty: ${res.data.time_penalty}%`
-        : `Final score ${res.data.score}/100 (${res.data.label})`;
+      const scoreText =
+        res.data.time_penalty > 0
+          ? `Final score ${res.data.score}/100 (${res.data.label}) - Base: ${res.data.base_score}%, Time penalty: ${res.data.time_penalty}%`
+          : `Final score ${res.data.score}/100 (${res.data.label})`;
       showToast(scoreText, "success");
       await onFinishSession();
     } catch (err) {
@@ -375,81 +487,247 @@ function ExamPanel({ data, showToast, setExamProgress, onFinishSession }) {
 
   return (
     <>
-      <div className="card">
-        <h3>Question {questionIdx + 1} / 3</h3>
-        <p>{q?.question || "Preparing questions..."}</p>
-      </div>
+      <section className="module-card interview-focus">
+        <div className="module-header">
+          <div>
+            <p className="eyebrow">Current prompt</p>
+            <h3>Question {questionIdx + 1} of 3</h3>
+          </div>
+          <div className={`pill-status ${answering ? "danger" : "success"}`}>{answering ? "Answer in Progress" : "Ready"}</div>
+        </div>
 
-      <div className="card">
-        <h3>Timer</h3>
-        <h1 className={`score-number ${timeLeft <= 20 && answering ? "critical" : "stable"}`}>{timer}</h1>
-        <div className="exam-controls">
-          <button className="exam-btn primary" onClick={startAnswer} disabled={!examReady || answering || Boolean(result)}>
+        <p className="question-copy">{q?.question || "Preparing questions..."}</p>
+
+        <div className="detail-grid compact">
+          <Metric label="Timer" value={timer} highlight={timeLeft <= 20 && answering} />
+          <Metric label="Backend mode" value={data?.mode || "loading"} />
+          <Metric label="Eye contact" value={inActiveQuestion && data?.is_cheating ? "Lost" : "Good"} />
+          <Metric label="Exam state" value={examReady ? "Started" : "Pending"} />
+        </div>
+
+        <div className="module-actions">
+          <button className="primary-btn" onClick={startAnswer} disabled={!examReady || answering || Boolean(result)}>
             Start Answer
           </button>
-          <button className="exam-btn secondary" onClick={finalizeQuestion} disabled={!answering}>
+          <button className="ghost-btn" onClick={finalizeQuestion} disabled={!answering}>
             End Now
           </button>
         </div>
-      </div>
+      </section>
 
-      <div className="card">
-        <h3>Live Suggestion</h3>
-        <div className="advice-box">{data?.suggestion || "Waiting..."}</div>
-        {inActiveQuestion && data?.is_cheating ? <p style={{ color: "#f85149" }}>Eye contact lost.</p> : null}
-      </div>
+      <section className="panel-grid two-up">
+        <InfoCard title="Live suggestion" value="Coach note" subtitle={data?.suggestion || "Waiting..."} />
+        <InfoCard
+          title="Risk watch"
+          value={inActiveQuestion && data?.is_cheating ? "Attention drift" : "Stable"}
+          subtitle={
+            inActiveQuestion && data?.is_cheating
+              ? "Eye contact dropped during the current answer."
+              : "Candidate posture and gaze are within acceptable range."
+          }
+        />
+      </section>
 
       {result ? (
-        <div className="card">
-          <h3>Question Score</h3>
-          <h1 className={`score-number ${result.score < 70 ? "critical" : "stable"}`}>{result.score}/100</h1>
-          <p>{result.label}</p>
-          {result.base_score !== undefined && result.time_penalty > 0 && (
-            <p style={{ fontSize: "0.9em", color: "#f85149" }}>
-              Base score: {result.base_score}% - Time penalty: {result.time_penalty}% 
-              (Answered in {result.elapsed_time}s)
-            </p>
-          )}
-          <div style={{ display: "grid", gap: 6 }}>
+        <section className="module-card">
+          <div className="module-header">
+            <div>
+              <p className="eyebrow">Question result</p>
+              <h3>Performance snapshot</h3>
+            </div>
+            <div className={`pill-status ${result.score < 70 ? "danger" : "success"}`}>{result.label}</div>
+          </div>
+
+          <div className="result-summary">
+            <div className={`score-pill ${result.score < 70 ? "danger" : "success"}`}>{result.score}/100</div>
+            <div className="result-copy">
+              <p>
+                {result.base_score !== undefined && result.time_penalty > 0
+                  ? `Base score ${result.base_score}% with a ${result.time_penalty}% time penalty after ${result.elapsed_time}s.`
+                  : "No time penalty applied for this answer."}
+              </p>
+            </div>
+          </div>
+
+          <div className="error-list">
             {(result.errors || []).map((e) => (
-              <div key={e.key} className="state-box">
-                {e.description} ({e.key === "time_penalty" ? `${e.percent_frames}% penalty` : `${e.percent_frames}%`})
+              <div key={e.key} className="error-item">
+                <span>{e.description}</span>
+                <strong>{e.key === "time_penalty" ? `${e.percent_frames}% penalty` : `${e.percent_frames}%`}</strong>
               </div>
             ))}
           </div>
-          <div className="exam-controls result-actions" style={{ marginTop: 10 }}>
-            <button className="exam-btn secondary" onClick={redoQuestion} style={{ marginRight: 10 }}>
+
+          <div className="module-actions">
+            <button className="ghost-btn" onClick={redoQuestion}>
               Redo Question
             </button>
             {questionIdx < 2 ? (
-              <button className="exam-btn primary" onClick={nextQuestion}>Next Question</button>
+              <button className="primary-btn" onClick={nextQuestion}>
+                Next Question
+              </button>
             ) : (
               <>
-                <button className="exam-btn secondary" onClick={restartSession} style={{ marginRight: 10 }}>
+                <button className="ghost-btn" onClick={restartSession}>
                   Restart Session
                 </button>
-                <button className="exam-btn primary" onClick={finishExam}>Finish Exam</button>
+                <button className="primary-btn" onClick={finishExam}>
+                  Finish Exam
+                </button>
               </>
             )}
           </div>
-        </div>
+        </section>
       ) : null}
 
-      <LiveTelemetry data={data} showScores />
+      <TelemetryPanel data={data} showScores />
     </>
   );
 }
 
-function LiveTelemetry({ data, showScores }) {
-  const isCalibrating = data?.mode === "calibrating";
+function Scoreboard({ data, screen }) {
+  const trustScore = Math.round(data?.trust_score ?? 0);
+  const rewardValue = Number(data?.reward ?? 0);
+  const rewardScore = Math.max(0, Math.min(100, Math.round((rewardValue + 1) * 50)));
+  const modeLabel = screen === "calibration" ? "Alignment" : "Interview";
+
   return (
-    <div className="card">
-      <h3>RL Telemetry</h3>
-      <p>State: {Array.isArray(data?.state) ? data.state.join(" | ") : "N/A"}</p>
-      <p>Action: {data?.action || "N/A"}</p>
-      <p>Reward: {showScores && !isCalibrating ? (data?.reward ?? 0) : "N/A (before calibration)"}</p>
-      <p>Trust score: {showScores && !isCalibrating ? `${data?.trust_score ?? 0}%` : "N/A (before calibration)"}</p>
-      <p>Source: {data?.identified_by || "N/A"}</p>
+    <section className="scoreboard-card">
+      <div className="score-header">
+        <div>
+          <p className="eyebrow">Live scores</p>
+          <h3>Session quality</h3>
+        </div>
+      </div>
+
+      <div className="ring-grid">
+        <ProgressRing value={trustScore} label="Trust Score" tone="violet" />
+        <ProgressRing value={rewardScore} label="Reward Index" tone="amber" />
+      </div>
+
+      <div className="score-tags">
+        <div className="tag-row">
+          <span>Tracking mode</span>
+          <strong>{modeLabel}</strong>
+        </div>
+        <div className="tag-row">
+          <span>Signal source</span>
+          <strong>{data?.identified_by || "N/A"}</strong>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ConversationPanel({ data, screen }) {
+  const messages = useMemo(() => {
+    if (screen === "calibration") {
+      return [
+        { author: "System", text: "Center your face inside the oval and hold still for reference capture.", accent: false },
+        { author: "Coach", text: data?.suggestion || "Waiting for camera data...", accent: true },
+        {
+          author: "Status",
+          text: data?.calibration_ready ? "Reference can be captured now." : "Keep adjusting until the alignment threshold is reached.",
+          accent: false,
+        },
+      ];
+    }
+
+    return [
+      { author: "Interviewer", text: "Continue answering with calm posture and consistent eye contact.", accent: false },
+      { author: "Coach", text: data?.suggestion || "Waiting...", accent: true },
+      {
+        author: "Monitor",
+        text: data?.is_cheating ? "Eye contact drift detected in the current answer." : "Posture signal looks stable right now.",
+        accent: false,
+      },
+    ];
+  }, [data?.calibration_ready, data?.is_cheating, data?.suggestion, screen]);
+
+  return (
+    <section className="chat-card">
+      <div className="chat-tabs">Chat</div>
+
+      <div className="chat-thread">
+        {messages.map((message) => (
+          <div key={`${message.author}-${message.text}`} className={`chat-bubble ${message.accent ? "accent" : ""}`}>
+            <p className="chat-author">{message.author}</p>
+            <p>{message.text}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="chat-input">Insights stream is read-only during the live session.</div>
+    </section>
+  );
+}
+
+function TelemetryPanel({ data, showScores }) {
+  const isCalibrating = data?.mode === "calibrating";
+
+  return (
+    <section className="module-card">
+      <div className="module-header">
+        <div>
+          <p className="eyebrow">RL telemetry</p>
+          <h3>Realtime posture signals</h3>
+        </div>
+      </div>
+
+      <div className="detail-grid">
+        <Metric label="State" value={Array.isArray(data?.state) ? data.state.join(" | ") : "N/A"} />
+        <Metric label="Action" value={data?.action || "N/A"} />
+        <Metric label="Reward" value={showScores && !isCalibrating ? data?.reward ?? 0 : "N/A"} />
+        <Metric
+          label="Trust score"
+          value={showScores && !isCalibrating ? `${data?.trust_score ?? 0}%` : "N/A"}
+        />
+      </div>
+    </section>
+  );
+}
+
+function ProgressBar({ value, tone = "violet" }) {
+  return (
+    <div className="progress-track">
+      <div className={`progress-fill ${tone}`} style={{ width: `${Math.max(0, Math.min(100, value))}%` }} />
+    </div>
+  );
+}
+
+function ProgressRing({ value, label, tone = "violet" }) {
+  const safeValue = Math.max(0, Math.min(100, value));
+  const degrees = safeValue * 3.6;
+
+  return (
+    <div className="ring-stat">
+      <div
+        className={`ring-visual ${tone}`}
+        style={{ background: `conic-gradient(var(--ring-color) ${degrees}deg, #efe9ff ${degrees}deg)` }}
+      >
+        <div className="ring-inner">{safeValue}%</div>
+      </div>
+      <strong>{label}</strong>
+    </div>
+  );
+}
+
+function InfoCard({ title, value, subtitle, children }) {
+  return (
+    <section className="info-card">
+      <p className="eyebrow">{title}</p>
+      <h3>{value}</h3>
+      <p className="info-subtitle">{subtitle}</p>
+      {children}
+    </section>
+  );
+}
+
+function Metric({ label, value, highlight = false }) {
+  return (
+    <div className={`metric-card ${highlight ? "highlight" : ""}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }
