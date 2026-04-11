@@ -61,13 +61,13 @@ function App() {
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <div className="brand">
+        <button className="brand brand-button" onClick={() => setScreen("home")}>
           <div className="brand-mark">PA</div>
           <div>
             <p className="eyebrow">Realtime Suite</p>
             <h1>PostureAI</h1>
           </div>
-        </div>
+        </button>
 
         <div className="nav-group">
           <p className="nav-label">Workspace</p>
@@ -160,15 +160,14 @@ function WelcomeScreen({ setScreen }) {
   return (
     <div className="welcome-screen">
       <div className="welcome-backdrop" />
+      <div className="welcome-aura aura-left" />
+      <div className="welcome-aura aura-right" />
       <div className="welcome-panel">
-        <div className="welcome-copy">
-          <p className="eyebrow">Interview intelligence workspace</p>
-          <h2>Run calibration first, then move into a polished live interview dashboard.</h2>
-          <p className="hero-subtitle">
-            This interface combines the camera stream, posture telemetry, timers, guidance, and scoring into a cleaner
-            control-room layout inspired by the design reference you shared.
-          </p>
-          <div className="hero-actions">
+        <section className="welcome-card">
+          <p className="welcome-badge">Posture Analysis Studio</p>
+          <h2>Calibrate. Start. Shine.</h2>
+          <p className="hero-subtitle">Professional mock interviews with clean live posture feedback.</p>
+          <div className="hero-actions welcome-actions">
             <button className="primary-btn" onClick={() => setScreen("calibration")}>
               Open Calibration
             </button>
@@ -176,26 +175,17 @@ function WelcomeScreen({ setScreen }) {
               Open Interview
             </button>
           </div>
-        </div>
-
-        <div className="preview-card">
-          <div className="preview-topbar">
-            <span />
-            <span />
-            <span />
-          </div>
-          <div className="preview-layout">
-            <div className="preview-sidebar" />
-            <div className="preview-main">
-              <div className="preview-video" />
-              <div className="preview-panels">
-                <div className="preview-block tall" />
-                <div className="preview-block" />
-                <div className="preview-block" />
-              </div>
+          <div className="welcome-meta">
+            <div className="meta-pill">
+              <span className="meta-dot success" />
+              Live Guidance
+            </div>
+            <div className="meta-pill">
+              <span className="meta-dot warm" />
+              Real-time Score
             </div>
           </div>
-        </div>
+        </section>
       </div>
     </div>
   );
@@ -409,6 +399,7 @@ function ExamPanel({ data, showToast, setExamProgress, onFinishSession }) {
     const ss = String(timeLeft % 60).padStart(2, "0");
     return `${mm}:${ss}`;
   }, [timeLeft]);
+  const examStateLabel = answering ? "Answering" : examReady ? "Started" : "Pending";
 
   return (
     <>
@@ -425,7 +416,7 @@ function ExamPanel({ data, showToast, setExamProgress, onFinishSession }) {
 
         <div className="detail-grid exam-status-grid">
           <Metric label="Timer" value={timer} highlight={timeLeft <= 20 && answering} />
-          <Metric label="Exam state" value={examReady ? "Started" : "Pending"} />
+          <Metric label="Exam state" value={examStateLabel} />
         </div>
 
         <div className="module-actions">
@@ -522,11 +513,18 @@ function SuggestionBox({ data, screen }) {
     screen === "calibration"
       ? "Align your face inside the frame and keep steady."
       : "Maintain eye contact and continue with steady posture.";
+  const message = data?.suggestion || fallback;
+  const normalized = message.toLowerCase();
+  const isPositive =
+    normalized.includes("good posture") ||
+    normalized.includes("ready") ||
+    normalized.includes("steady");
+  const toneClass = isPositive ? "positive" : "alert";
 
   return (
-    <section className="suggestion-card">
+    <section className={`suggestion-card ${toneClass}`}>
       <p className="eyebrow">Suggestion</p>
-      <strong>{data?.suggestion || fallback}</strong>
+      <strong>{message}</strong>
     </section>
   );
 }
