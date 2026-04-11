@@ -9,6 +9,20 @@ __pycache__/
 *.pyo
 *.pyd
 
+# 🔥 Node / frontend
+node_modules/
+frontend/node_modules/
+frontend/dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp/
+.pnp.js
+
+# 🔥 Environment files
+.env
+.env.local
+
 # 🔥 Model / runtime files
 *.pkl
 

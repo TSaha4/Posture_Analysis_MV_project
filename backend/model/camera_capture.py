@@ -1,8 +1,8 @@
 import cv2
 try:
-    from .camera_rl_utils import detect_face_info, is_face_in_circle
+    from .camera_utils import detect_face_info, is_face_in_circle
 except ImportError:  # pragma: no cover
-    from backend.model.camera_rl_utils import detect_face_info, is_face_in_circle
+    from backend.model.camera_utils import detect_face_info, is_face_in_circle
 
 
 def capture_initial_reference(cap):
@@ -36,7 +36,7 @@ def capture_initial_reference(cap):
             is_inside, ratio = is_face_in_circle(info, center, radius, ellipse_axes=axes)
             cv2.putText(frame, f"Face inside: {ratio:.1%}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
-        cv2.imshow("RL cam", frame)
+        cv2.imshow("Posture Monitor", frame)
         key = cv2.waitKey(1) & 0xFF
 
         if key == ord("c"):

@@ -129,6 +129,71 @@ body {
 .video-frame-container.full-height { height: 100%; }
 .video-element { height: 100%; width: 100%; object-fit: contain; }
 
+.video-title-strip {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.62);
+  border: 1px solid rgba(255,255,255,0.12);
+  font-size: 0.82rem;
+}
+
+.video-title-strip strong {
+  color: var(--success);
+}
+
+.mv-video-overlay {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 14px;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+  pointer-events: none;
+}
+
+.mv-video-overlay > div {
+  min-width: 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.68);
+  border: 1px solid rgba(255,255,255,0.12);
+}
+
+.mv-video-overlay span {
+  display: block;
+  color: var(--text-gray);
+  font-size: 0.7rem;
+  margin-bottom: 3px;
+}
+
+.mv-video-overlay strong {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 0.84rem;
+  text-transform: capitalize;
+}
+
+.overlay-suggestion.good {
+  border-color: rgba(63, 185, 80, 0.6);
+}
+
+.overlay-suggestion.warning {
+  border-color: rgba(242, 201, 76, 0.7);
+}
+
+.overlay-suggestion.danger {
+  border-color: rgba(248, 81, 73, 0.7);
+}
+
 .camera-progress-shell {
   position: absolute;
   top: 0;
@@ -185,7 +250,7 @@ body {
   letter-spacing: 0.5px;
 }
 
-/* Action Card (Posture Specific) */
+/* Suggestion Card (Posture Specific) */
 .action-card-highlight { 
   border-left: 4px solid var(--accent) !important; 
   background: linear-gradient(145deg, #1c2128, #161b22) !important; 
@@ -241,6 +306,131 @@ body {
   line-height: 1.5;
   border: 1px solid rgba(255,255,255,0.05);
   margin-top: 10px;
+}
+
+.vision-insights-card {
+  display: grid;
+  gap: 12px;
+}
+
+.mv-status-line {
+  margin: 0;
+  color: var(--text-gray);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.insight-section h4 {
+  margin: 0 0 8px;
+  color: white;
+  font-size: 0.9rem;
+}
+
+.insight-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.insight-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  background: rgba(0,0,0,0.2);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+.insight-row.full {
+  min-height: 42px;
+}
+
+.insight-row span,
+.suggestion-pill span {
+  color: var(--text-gray);
+}
+
+.insight-row strong,
+.suggestion-pill strong {
+  text-align: right;
+  text-transform: capitalize;
+}
+
+.suggestion-pill {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border-color);
+  font-size: 0.9rem;
+}
+
+.suggestion-pill.good {
+  border-color: rgba(63, 185, 80, 0.45);
+  background: rgba(63, 185, 80, 0.12);
+}
+
+.suggestion-pill.warning {
+  border-color: rgba(242, 201, 76, 0.5);
+  background: rgba(242, 201, 76, 0.12);
+}
+
+.suggestion-pill.danger {
+  border-color: rgba(248, 81, 73, 0.5);
+  background: rgba(248, 81, 73, 0.12);
+}
+
+.suggestion-pill.neutral {
+  background: rgba(0,0,0,0.2);
+}
+
+.measurement-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 12px;
+  padding: 10px;
+  background: rgba(0,0,0,0.16);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 8px;
+  font-size: 0.82rem;
+}
+
+.measurement-grid span {
+  color: var(--text-gray);
+}
+
+.measurement-grid strong {
+  text-align: right;
+}
+
+.processing-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.stage-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.18);
+  border: 1px solid rgba(255,255,255,0.08);
+  font-size: 0.82rem;
+}
+
+.stage-chip span {
+  color: var(--text-gray);
+}
+
+.stage-chip.active {
+  border-color: rgba(63, 185, 80, 0.45);
+  background: rgba(63, 185, 80, 0.1);
 }
 
 .vector-grid { 
@@ -328,4 +518,31 @@ body {
 
 .exam-card{
   width:100%;
+}
+
+@media (max-width: 900px) {
+  body {
+    overflow: auto;
+  }
+
+  .container {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .main-content {
+    flex-direction: column;
+  }
+
+  .dashboard-sidebar {
+    width: 100%;
+  }
+
+  .video-frame-container.full-height {
+    min-height: 360px;
+  }
+
+  .mv-video-overlay {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }

@@ -3,12 +3,23 @@ import axios from "axios";
 
 const API = "http://127.0.0.1:8000";
 
-const useRLData = (isActive) => {
+const useVisionData = (isActive) => {
   const [data, setData] = useState({
     connected: false,
     state: null,
     action: null,
-    reward: 0,
+    position: null,
+    head: null,
+    gaze: null,
+    movement: 0,
+    movement_value: 0,
+    movement_level: "low",
+    gaze_away_counter: 0,
+    processing_flags: {
+      edge_detected: false,
+      threshold_applied: false,
+      corners_detected: false,
+    },
     is_bad: false,
     is_cheating: false,
     trust_score: 0,
@@ -36,7 +47,7 @@ const useRLData = (isActive) => {
         .get(`${API}/state`, { timeout: 2000 })
         .then((res) => setData({ connected: true, ...res.data }))
         .catch((err) => {
-          console.error("Error fetching RL data:", err);
+          console.error("Error fetching monitoring data:", err);
           setData((prev) => ({ ...prev, connected: false }));
         });
     }, 500);
@@ -47,4 +58,4 @@ const useRLData = (isActive) => {
   return data;
 };
 
-export default useRLData;
+export default useVisionData;

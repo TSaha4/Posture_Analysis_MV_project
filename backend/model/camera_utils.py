@@ -1,24 +1,10 @@
 import cv2
 import numpy as np
 import time
-import os
-import pickle
 import tkinter as tk
 from tkinter import messagebox
-from collections import defaultdict
 
-# Paths
-Q_TABLE_PATH = os.path.join(os.path.dirname(__file__), "q_table.pkl")
-
-# RL setup
 actions = ["no_action", "adjust_posture", "look_screen", "reduce_movement"]
-Q = defaultdict(lambda: np.zeros(len(actions), dtype=np.float32))
-
-alpha = 0.1
-gamma = 0.9
-epsilon = 0.25
-min_epsilon = 0.01
-epsilon_decay = 0.9995
 
 # popup cooldown
 time.sleep(0)
@@ -26,10 +12,10 @@ last_popup_time = 0
 popup_cooldown = 3.0
 
 # Global thresholds for state detection (shown during calibration)
-position_threshold = 0.15  # % of face width
-head_angle_threshold = 10  # degrees
-eye_dir_threshold = 0.2
-ratio_diff_threshold = 0.14
+position_threshold = 0.25  # normalized face-width offset
+head_angle_threshold = 16  # degrees
+eye_dir_threshold = 0.35
+ratio_diff_threshold = 0.3
 
 face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
 eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_eye.xml")
@@ -102,15 +88,15 @@ def build_state(info, baseline):
     if info is None or baseline is None:
         return None
 
+    face_w = max(float(info.get("face_w", 1)), 1.0)
+    face_h = max(float(info.get("face_h", face_w)), 1.0)
     dx = info["face_x"] - baseline["face_x"]
-    dy = info["face_y"] - baseline["face_y"]
+    normalized_x = dx / face_w
     angle_diff = info["head_angle"] - baseline["head_angle"]
 
-    w = info.get("face_w", 1)
-
-    if abs(dx) < position_threshold * w and abs(dy) < position_threshold * w:
+    if abs(normalized_x) < position_threshold:
         position = "centered"
-    elif dx < 0:
+    elif normalized_x < 0:
         position = "left"
     else:
         position = "right"
@@ -144,61 +130,44 @@ def badness(state):
     return score
 
 
-def reward_for_transition(state, next_state):
-    if next_state is None:
-        return -2
-    
-    current_bad = badness(state)
-    next_bad = badness(next_state)
-    
-    # Perfect state achieved
-    if next_bad == 0:
-        return 2
-    
-    # Improvement detected
-    if next_bad < current_bad:
-        return 3
-    
-    # Maintaining a good state (badness <= 1 means at most 1 thing wrong)
-    if next_bad <= 1:
-        return 1
-    
-    # Worsening state
-    if next_bad > current_bad:
-        return -2
-    
-    # Stuck in bad state but not worsening
-    return -1
+def movement_level(movement, low_threshold=12.0, high_threshold=35.0):
+    if movement >= high_threshold:
+        return "high"
+    if movement >= low_threshold:
+        return "medium"
+    return "low"
 
 
-def choose_action(state, epsilon_val):
+def decide_action(state, movement, gaze_away_counter, movement_threshold=35.0):
     if state is None:
-        return 0
-    if np.random.rand() < epsilon_val:
-        return np.random.randint(len(actions))
-    return int(np.argmax(Q[state]))
+        return "no_action"
+
+    position, head, gaze = state
+
+    if gaze == "away" and gaze_away_counter > 6:
+        return "look_screen"
+
+    if head == "tilted":
+        return "adjust_posture"
+
+    if position in ["left", "right"]:
+        return "adjust_posture"
+
+    # Motion analysis helps catch repeated shifting even when the current
+    # discrete posture state still looks acceptable.
+    if movement > movement_threshold:
+        return "reduce_movement"
+
+    return "no_action"
 
 
 def show_popup(message):
     global last_popup_time
     root = tk.Tk()
     root.withdraw()
-    messagebox.showwarning("Posture RL", message)
+    messagebox.showwarning("Posture Monitor", message)
     last_popup_time = time.time()
     root.destroy()
-
-
-def save_q_table():
-    with open(Q_TABLE_PATH, "wb") as f:
-        pickle.dump(dict(Q), f)
-
-
-def load_q_table():
-    if os.path.exists(Q_TABLE_PATH):
-        with open(Q_TABLE_PATH, "rb") as f:
-            data = pickle.load(f)
-            for k, v in data.items():
-                Q[k] = v
 
 
 def is_face_in_circle(face_info, frame_center, circle_radius, ellipse_axes=None):

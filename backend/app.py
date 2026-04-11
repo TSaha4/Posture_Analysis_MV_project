@@ -14,9 +14,9 @@ from flask_cors import CORS
 # IMPORTS
 # ---------------------------
 try:
-    from backend.model.camera_rl_utils import *
+    from backend.model.camera_utils import *
 except:
-    from model.camera_rl_utils import *
+    from model.camera_utils import *
 
 app = Flask(__name__)
 CORS(app)
@@ -37,9 +37,14 @@ calibration_snapshot = None
 calibration_frozen = False
 calibration_frozen_until = 0.0
 CALIBRATION_FREEZE_SECONDS = 1.5
+QUESTION_ERROR_TOLERANCE_PERCENT = 10.0
 
 baseline = None
-epsilon = 0.25
+prev_face_center = None
+gaze_away_counter = 0
+stable_state = None
+state_candidate = None
+state_candidate_count = 0
 
 exam_active = False
 question_active = False
@@ -54,7 +59,7 @@ question_start_time = None
 
 data_lock = threading.Lock()
 
-current_rl_data = {
+current_state_data = {
     "mode": "idle",
     "suggestion": "Waiting...",
     "calibration_ready": False,
@@ -68,9 +73,22 @@ current_rl_data = {
     "eye_dir": 0.0,
     "eye_ratio": 0.0,
     "eye_distance": 0.0,
+    "movement": 0.0,
+    "movement_value": 0.0,
+    "movement_level": "low",
+    "gaze_away_counter": 0,
+    "processing_flags": {
+        "edge_detected": False,
+        "threshold_applied": False,
+        "corners_detected": False,
+    },
+    "error_tolerance_percent": QUESTION_ERROR_TOLERANCE_PERCENT,
+    "position": None,
+    "head": None,
+    "gaze": None,
+    "identified_by": "Machine Vision Rules",
     "trust_score": 0,
     "is_cheating": False,
-    "reward": 0,
     "action": None,
     "state": None,
 }
@@ -103,6 +121,39 @@ def label_for_score(score):
         return "Average"
     return "Poor"
 
+
+def smooth_state(raw_state, required_frames=3):
+    global stable_state, state_candidate, state_candidate_count
+
+    if raw_state is None:
+        state_candidate = None
+        state_candidate_count = 0
+        return stable_state
+
+    if stable_state is None:
+        stable_state = raw_state
+        state_candidate = None
+        state_candidate_count = 0
+        return raw_state
+
+    if raw_state == stable_state:
+        state_candidate = None
+        state_candidate_count = 0
+        return stable_state
+
+    if raw_state == state_candidate:
+        state_candidate_count += 1
+    else:
+        state_candidate = raw_state
+        state_candidate_count = 1
+
+    if state_candidate_count >= required_frames:
+        stable_state = raw_state
+        state_candidate = None
+        state_candidate_count = 0
+
+    return stable_state
+
 # ---------------------------
 # CAMERA HANDLING
 # ---------------------------
@@ -124,27 +175,33 @@ def open_camera():
     return None
 
 def camera_loop():
-    global cap, current_frame, current_rl_data, camera_error, latest_face_info
-    global calibration_frozen, calibration_frozen_until
+    global cap, current_frame, current_state_data, camera_error, latest_face_info
+    global calibration_frozen, calibration_frozen_until, prev_face_center, gaze_away_counter
+    global stable_state, state_candidate, state_candidate_count
 
     cap = open_camera()
     if cap is None:
         camera_error = "Cannot open webcam. Close other camera apps or check camera permissions."
         with data_lock:
-            current_rl_data = {
-                **current_rl_data,
+            current_state_data = {
+                **current_state_data,
                 "mode": "idle",
                 "suggestion": camera_error,
             }
         return
 
     camera_error = None
+    prev_face_center = None
+    gaze_away_counter = 0
+    stable_state = None
+    state_candidate = None
+    state_candidate_count = 0
 
     while camera_active:
         if calibration_frozen and time.time() < calibration_frozen_until:
             with data_lock:
-                current_rl_data = {
-                    **current_rl_data,
+                current_state_data = {
+                    **current_state_data,
                     "mode": "calibration_freeze",
                     "calibration_frozen": True,
                     "calibration_freeze_remaining": max(0.0, calibration_frozen_until - time.time()),
@@ -164,6 +221,17 @@ def camera_loop():
             continue
 
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        # Light smoothing improves cascade stability without adding heavy cost.
+        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+        gray = cv2.equalizeHist(gray)
+        edges = cv2.Canny(gray, 100, 200)
+        _, thresh = cv2.threshold(gray, 127, 255, cv2.THRESH_BINARY)
+        corners = cv2.cornerHarris(np.float32(gray), 2, 3, 0.04)
+        processing_flags = {
+            "edge_detected": edges is not None,
+            "threshold_applied": thresh is not None,
+            "corners_detected": corners is not None,
+        }
         info = detect_face_info(gray)
         latest_face_info = info
         h, w = frame.shape[:2]
@@ -178,10 +246,12 @@ def camera_loop():
         )
 
         suggestion = "Align face in the frame."
-        rl_state = None
+        state = None
         action = None
         trust_score = 0
         is_cheating = False
+        movement = 0.0
+        movement_label = "low"
         face_w = int(info.get("face_w", 0)) if info else 0
         face_h = int(info.get("face_h", 0)) if info else 0
         head_angle = float(info.get("head_angle", 0.0)) if info else 0.0
@@ -200,15 +270,36 @@ def camera_loop():
             suggestion = "Ready to capture reference." if calibration_ready else "Move your face inside the oval."
             oval_color = (0, 255, 0) if calibration_ready else (0, 165, 255)
             cv2.ellipse(frame, center, axes, 0, 0, 360, oval_color, 3)
+            prev_face_center = (float(info["face_x"]), float(info["face_y"]))
+            gaze_away_counter = 0
         elif info and baseline:
-            rl_state = build_state(info, baseline)
+            state = smooth_state(build_state(info, baseline))
 
-            if rl_state:
-                action_idx = choose_action(rl_state, epsilon)
-                action = actions[action_idx]
-                is_cheating = rl_state[2] != "looking"
-                posture_is_good = not is_bad_state(rl_state)
-                suggestion = "Good posture" if posture_is_good else "Adjust posture and look at the screen."
+            if state:
+                current_face_center = (float(info["face_x"]), float(info["face_y"]))
+                if prev_face_center is not None:
+                    dx = current_face_center[0] - prev_face_center[0]
+                    dy = current_face_center[1] - prev_face_center[1]
+                    movement = float(np.sqrt((dx * dx) + (dy * dy)))
+                prev_face_center = current_face_center
+                movement_label = movement_level(movement)
+
+                if state[2] == "away":
+                    gaze_away_counter += 1
+                else:
+                    gaze_away_counter = 0
+
+                action = decide_action(state, movement, gaze_away_counter)
+                is_cheating = state[2] != "looking"
+                posture_is_good = not is_bad_state(state)
+                if action == "look_screen":
+                    suggestion = "Look at the screen."
+                elif action == "reduce_movement":
+                    suggestion = "Reduce movement."
+                elif action == "adjust_posture":
+                    suggestion = "Adjust posture."
+                else:
+                    suggestion = "Good posture"
                 if exam_active:
                     if posture_is_good:
                         posture_stats["good"] += 1
@@ -223,14 +314,47 @@ def camera_loop():
                 trust_score = int((posture_stats["good"] / total) * 100) if total > 0 else 0
         elif baseline is not None:
             suggestion = "Face not detected."
+            action = "look_screen"
+            is_cheating = True
+            prev_face_center = None
+            gaze_away_counter = 0
+            if exam_active:
+                posture_stats["bad"] += 1
+            if question_active:
+                question_stats["bad"] = question_stats.get("bad", 0) + 1
+
+        debug_overlay = frame.copy()
+        debug_overlay[edges > 0] = (255, 255, 255)
+        if corners is not None and corners.max() > 0:
+            debug_overlay[corners > 0.02 * corners.max()] = (255, 0, 255)
+        frame = cv2.addWeighted(debug_overlay, 0.12, frame, 0.88, 0)
+
+        if info:
+            fx = int(info["face_x"] - info["face_w"] / 2)
+            fy = int(info["face_y"] - info["face_h"] / 2)
+            fw = int(info["face_w"])
+            fh = int(info["face_h"])
+            box_color = (0, 255, 0) if action in (None, "no_action") else (0, 165, 255)
+            if action in ("look_screen", "reduce_movement"):
+                box_color = (0, 0, 255)
+            cv2.rectangle(frame, (fx, fy), (fx + fw, fy + fh), box_color, 2)
+            cv2.circle(frame, (int(info["face_x"]), int(info["face_y"])), 4, box_color, -1)
+
+        overlay_state = " | ".join(state) if state else "calibrating" if baseline is None else "no_face"
+        cv2.putText(frame, f"MV: {overlay_state}", (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(frame, f"Suggestion: {action or 'N/A'}", (12, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(frame, f"Movement: {movement_label} ({movement:.1f})", (12, 82), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 2, cv2.LINE_AA)
 
         _, buffer = cv2.imencode('.jpg', frame)
+        position = state[0] if state else None
+        head = state[1] if state else None
+        gaze = state[2] if state else None
 
         with data_lock:
             current_frame = buffer.tobytes()
-            current_rl_data = {
-                **current_rl_data,
-                "state": rl_state,
+            current_state_data = {
+                **current_state_data,
+                "state": state,
                 "action": action,
                 "mode": mode,
                 "suggestion": suggestion,
@@ -244,7 +368,17 @@ def camera_loop():
                 "eye_dir": eye_dir,
                 "eye_ratio": eye_ratio,
                 "eye_distance": eye_distance,
+                "movement": movement,
+                "movement_value": movement,
+                "movement_level": movement_label,
+                "gaze_away_counter": gaze_away_counter,
+                "processing_flags": processing_flags,
+                "error_tolerance_percent": QUESTION_ERROR_TOLERANCE_PERCENT,
+                "position": position,
+                "head": head,
+                "gaze": gaze,
                 "calibration_snapshot": calibration_snapshot,
+                "identified_by": "Machine Vision Rules",
                 "trust_score": trust_score,
                 "is_cheating": is_cheating,
             }
@@ -275,13 +409,19 @@ def home():
 @app.route("/state")
 def state():
     with data_lock:
-        return jsonify(current_rl_data)
+        return jsonify(current_state_data)
 
 @app.route("/calibrate")
 def calibrate():
     global baseline, exam_active, question_active, exam_start_time, question_start_time, calibration_snapshot
-    global calibration_frozen, calibration_frozen_until
+    global calibration_frozen, calibration_frozen_until, prev_face_center, gaze_away_counter
+    global stable_state, state_candidate, state_candidate_count
     baseline = None
+    prev_face_center = None
+    gaze_away_counter = 0
+    stable_state = None
+    state_candidate = None
+    state_candidate_count = 0
     calibration_snapshot = None
     calibration_frozen = False
     calibration_frozen_until = 0.0
@@ -294,6 +434,7 @@ def calibrate():
 @app.route("/capture_reference")
 def capture():
     global baseline, calibration_snapshot, calibration_frozen, calibration_frozen_until
+    global stable_state, state_candidate, state_candidate_count
 
     if latest_face_info is None:
         return jsonify({"error": "no face detected"}), 400
@@ -321,6 +462,9 @@ def capture():
 
     calibration_frozen = True
     calibration_frozen_until = time.time() + CALIBRATION_FREEZE_SECONDS
+    stable_state = None
+    state_candidate = None
+    state_candidate_count = 0
 
     return jsonify({"status": "captured", "baseline": baseline, "calibration": calibration_snapshot})
 
@@ -357,7 +501,8 @@ def begin_answer():
 
     question_stats = {
         "good": 0,
-        "bad": 0
+        "bad": 0,
+        "started_at": question_start_time,
     }
 
     return jsonify({"status": "question_started"})
@@ -373,19 +518,35 @@ def end_question():
     if not question_active:
         return jsonify({"error": "no active question"}), 400
 
+    ended_at = time.time()
     question_active = False
-    elapsed_time = time.time() - question_start_time if question_start_time else 0.0
+    elapsed_time = ended_at - question_start_time if question_start_time else 0.0
     question_start_time = None
 
     good_frames = question_stats.get("good", 0)
     bad_frames = question_stats.get("bad", 0)
     total_frames = good_frames + bad_frames
-    posture_score = round((good_frames / total_frames) * 100, 1) if total_frames > 0 else 0.0
+    raw_error_percent = round((bad_frames / total_frames) * 100, 1) if total_frames > 0 else 100.0
+    penalty_error_percent = round(max(0.0, raw_error_percent - QUESTION_ERROR_TOLERANCE_PERCENT), 1)
+    posture_score = round(max(0.0, 100.0 - penalty_error_percent), 1)
     time_score = float(time_score_for_elapsed(elapsed_time))
-    score = round((posture_score * 0.7) + (time_score * 0.3), 1)
-    label = label_for_score(score)
     time_penalty = round(max(0.0, 100.0 - time_score), 1)
+    score = round(max(0.0, 100.0 - (penalty_error_percent * 0.7) - (time_penalty * 0.3)), 1)
+    label = label_for_score(score)
     errors = []
+
+    if penalty_error_percent > 0:
+        errors.append({
+            "key": "posture_penalty",
+            "description": f"Posture/gaze drift exceeded {QUESTION_ERROR_TOLERANCE_PERCENT:.0f}% tolerance.",
+            "percent_frames": penalty_error_percent,
+        })
+    else:
+        errors.append({
+            "key": "posture_tolerance",
+            "description": f"Posture/gaze drift stayed within {QUESTION_ERROR_TOLERANCE_PERCENT:.0f}% tolerance.",
+            "percent_frames": raw_error_percent,
+        })
 
     if time_score < 50:
         errors.append({
@@ -401,12 +562,22 @@ def end_question():
         })
     else:
         errors.append({
-            "key": "time_reward",
+            "key": "time_credit",
             "description": f"Good answer duration ({elapsed_time:.1f}s).",
             "percent_frames": time_score,
         })
 
-    question_history.append(score)
+    question_history.append({
+        "score": score,
+        "elapsed_time": round(elapsed_time, 1),
+        "good_frames": good_frames,
+        "bad_frames": bad_frames,
+        "total_frames": total_frames,
+        "raw_error_percent": raw_error_percent,
+        "penalty_error_percent": penalty_error_percent,
+        "time_score": time_score,
+        "time_penalty": time_penalty,
+    })
 
     return jsonify({
         "status": "ended",
@@ -418,6 +589,10 @@ def end_question():
         "time_penalty": time_penalty,
         "good_frames": good_frames,
         "bad_frames": bad_frames,
+        "total_frames": total_frames,
+        "error_tolerance_percent": QUESTION_ERROR_TOLERANCE_PERCENT,
+        "raw_error_percent": raw_error_percent,
+        "penalty_error_percent": penalty_error_percent,
         "errors": errors,
     })
 
@@ -430,13 +605,9 @@ def end_exam():
     question_start_time = None
 
     if question_history:
-        score = round(sum(question_history) / len(question_history), 1)
+        score = round(sum(q["score"] for q in question_history) / len(question_history), 1)
     else:
-        total = posture_stats["good"] + posture_stats["bad"]
-        posture_score = round((posture_stats["good"] / total) * 100, 1) if total > 0 else 0.0
-        elapsed_time = time.time() - exam_start_time if exam_start_time else 0.0
-        time_score = float(time_score_for_elapsed(elapsed_time / 3 if elapsed_time > 0 else 0.0))
-        score = round((posture_score * 0.7) + (time_score * 0.3), 1)
+        score = 0.0
 
     return jsonify({
         "status": "exam_ended",
@@ -485,7 +656,6 @@ def cleanup():
     global cap
     if cap:
         cap.release()
-    save_q_table()
 
 # ---------------------------
 # RUN

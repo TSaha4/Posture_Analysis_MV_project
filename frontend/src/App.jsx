@@ -1,17 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
-import useRLData from "./hooks/useRLData";
+import useVisionData from "./hooks/useVisionData";
 import hrQuestions from "./data/hrQuestions.json";
 import "./App.css";
 
 const API = "http://127.0.0.1:8000";
 const QUESTION_SECONDS = 180;
+const STATE_POLL_SECONDS = 0.5;
 
 function App() {
   const [screen, setScreen] = useState("home");
   const [toast, setToast] = useState(null);
   const [examProgress, setExamProgress] = useState(100);
-  const data = useRLData(screen !== "home");
+  const data = useVisionData(screen !== "home");
   const backendOnline = Boolean(data?.connected);
   const streamSrc = useMemo(() => `${API}/video_feed?screen=${screen}`, [screen]);
   const showToast = useCallback((message, type = "info") => {
@@ -61,7 +62,7 @@ function App() {
         <div className="bg-glow blue" />
         <div className="bg-glow purple" />
         <div className="hero-section">
-          <div className="badge-chip">RL Interview Pipeline</div>
+          <div className="badge-chip">Machine Vision Interview Pipeline</div>
           <h2 className="glitch-text">Calibration + Timed Exam</h2>
           <p className="hero-subtitle">
             Capture a strict calibration reference first, then run a timed 3-question mock interview with live posture scoring.
@@ -109,6 +110,10 @@ function App() {
       <div className="main-content">
         <div className="left-panel">
           <div className="video-frame-container full-height">
+            <div className="video-title-strip">
+              <span>Live Machine Vision Feed</span>
+              <strong>{backendOnline ? "Streaming" : "Waiting"}</strong>
+            </div>
             {screen === "exam" ? (
               <div className="camera-progress-shell">
                 <div className="camera-progress-fill" style={{ width: `${examProgress}%` }} />
@@ -126,6 +131,7 @@ function App() {
               alt="Live Feed"
               className="video-element"
             />
+            <VisionVideoOverlay data={data} />
           </div>
         </div>
 
@@ -150,6 +156,52 @@ function App() {
             />
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function VisionVideoOverlay({ data }) {
+  const state = Array.isArray(data?.state) ? data.state : [];
+  const position = data?.position || state[0] || "N/A";
+  const head = data?.head || state[1] || "N/A";
+  const gaze = data?.gaze || state[2] || "N/A";
+  const movement = data?.movement_level || "low";
+  const movementValue = data?.movement_value ?? data?.movement ?? 0;
+  const attentionSeconds = ((data?.gaze_away_counter || 0) * STATE_POLL_SECONDS).toFixed(1);
+  const suggestionAction = data?.action || "N/A";
+  const suggestionClass = {
+    no_action: "good",
+    adjust_posture: "warning",
+    look_screen: "danger",
+    reduce_movement: "danger",
+  }[suggestionAction] || "neutral";
+
+  return (
+    <div className="mv-video-overlay">
+      <div>
+        <span>Position</span>
+        <strong>{position === "centered" ? "center" : position}</strong>
+      </div>
+      <div>
+        <span>Head</span>
+        <strong>{head}</strong>
+      </div>
+      <div>
+        <span>Gaze</span>
+        <strong>{gaze}</strong>
+      </div>
+      <div>
+        <span>Movement</span>
+        <strong>{movement} ({movementValue.toFixed(1)})</strong>
+      </div>
+      <div>
+        <span>Away</span>
+        <strong>{attentionSeconds}s</strong>
+      </div>
+      <div className={`overlay-suggestion ${suggestionClass}`}>
+        <span>Suggestion</span>
+        <strong>{suggestionAction}</strong>
       </div>
     </div>
   );
@@ -232,7 +284,7 @@ function CalibrationPanel({ data, showToast }) {
         <div className="advice-box">{data?.suggestion || "Waiting for camera data..."}</div>
       </div>
 
-      <LiveTelemetry data={data} showScores={!isCalibrating} />
+      <MachineVisionInsights data={data} showInsights={!isCalibrating} />
     </>
   );
 }
@@ -410,6 +462,12 @@ function ExamPanel({ data, showToast, setExamProgress, onFinishSession }) {
               (Answered in {result.elapsed_time}s)
             </p>
           )}
+          {result.raw_error_percent !== undefined ? (
+            <p style={{ fontSize: "0.9em", color: "#8b949e" }}>
+              Timer-only scoring: {result.total_frames || 0} frames, {result.raw_error_percent}% drift,
+              {` ${result.penalty_error_percent}% counted after ${result.error_tolerance_percent}% tolerance.`}
+            </p>
+          ) : null}
           <div style={{ display: "grid", gap: 6 }}>
             {(result.errors || []).map((e) => (
               <div key={e.key} className="state-box">
@@ -435,21 +493,93 @@ function ExamPanel({ data, showToast, setExamProgress, onFinishSession }) {
         </div>
       ) : null}
 
-      <LiveTelemetry data={data} showScores />
+      <MachineVisionInsights data={data} showInsights />
     </>
   );
 }
 
-function LiveTelemetry({ data, showScores }) {
+function MachineVisionInsights({ data, showInsights }) {
   const isCalibrating = data?.mode === "calibrating";
+  const isReady = showInsights && !isCalibrating;
+  const state = Array.isArray(data?.state) ? data.state : [];
+  const position = data?.position || state[0] || "N/A";
+  const displayPosition = position === "centered" ? "center" : position;
+  const head = data?.head || state[1] || "N/A";
+  const gaze = data?.gaze || state[2] || "N/A";
+  const movementLevel = data?.movement_level || "low";
+  const movementValue = data?.movement_value ?? data?.movement ?? 0;
+  const processingFlags = data?.processing_flags || {};
+  const movementLabel = {
+    low: "Low (small movement)",
+    medium: "Medium",
+    high: "High (large movement)",
+  }[movementLevel] || "N/A";
+  const attentionSeconds = ((data?.gaze_away_counter || 0) * STATE_POLL_SECONDS).toFixed(1);
+  const suggestionAction = data?.action || "N/A";
+  const suggestionClass = {
+    no_action: "good",
+    adjust_posture: "warning",
+    look_screen: "danger",
+    reduce_movement: "danger",
+  }[suggestionAction] || "neutral";
+
   return (
-    <div className="card">
-      <h3>RL Telemetry</h3>
-      <p>State: {Array.isArray(data?.state) ? data.state.join(" | ") : "N/A"}</p>
-      <p>Action: {data?.action || "N/A"}</p>
-      <p>Reward: {showScores && !isCalibrating ? (data?.reward ?? 0) : "N/A (before calibration)"}</p>
-      <p>Trust score: {showScores && !isCalibrating ? `${data?.trust_score ?? 0}%` : "N/A (before calibration)"}</p>
-      <p>Source: {data?.identified_by || "N/A"}</p>
+    <div className="card vision-insights-card">
+      <h3>Machine Vision Insights</h3>
+      <p className="mv-status-line">System running on Machine Vision (Rule-based Analysis)</p>
+
+      <div className="insight-section">
+        <h4>Current State Breakdown</h4>
+        <div className="insight-grid">
+          <div className="insight-row"><span>👤 Position</span><strong>{isReady ? displayPosition : "N/A"}</strong></div>
+          <div className="insight-row"><span>🧠 Head</span><strong>{isReady ? head : "N/A"}</strong></div>
+          <div className="insight-row"><span>👀 Gaze</span><strong>{isReady ? gaze : "N/A"}</strong></div>
+        </div>
+      </div>
+
+      <div className="insight-row full">
+        <span>📉 Movement</span>
+        <strong>{isReady ? movementLabel : "N/A"}</strong>
+      </div>
+
+      <div className="insight-row full">
+        <span>⏱ Attention</span>
+        <strong>{isReady ? `Looking away for ${attentionSeconds} seconds` : "N/A"}</strong>
+      </div>
+
+      <div className="insight-section">
+        <h4>Live MV Measurements</h4>
+        <div className="measurement-grid">
+          <span>Face</span><strong>{Math.round(data?.face_width || 0)} x {Math.round(data?.face_height || 0)}</strong>
+          <span>Head angle</span><strong>{(data?.head_angle ?? 0).toFixed(2)}</strong>
+          <span>Eye direction</span><strong>{(data?.eye_dir ?? 0).toFixed(2)}</strong>
+          <span>Eye ratio</span><strong>{(data?.eye_ratio ?? 0).toFixed(2)}</strong>
+          <span>Movement px</span><strong>{movementValue.toFixed(1)}</strong>
+        </div>
+      </div>
+
+      <div className="insight-section">
+        <h4>Vision Processing</h4>
+        <div className="processing-grid">
+          <div className={processingFlags.edge_detected ? "stage-chip active" : "stage-chip"}>
+            <span>Edge Detection</span>
+            <strong>{processingFlags.edge_detected ? "Active" : "Waiting"}</strong>
+          </div>
+          <div className={processingFlags.threshold_applied ? "stage-chip active" : "stage-chip"}>
+            <span>Thresholding</span>
+            <strong>{processingFlags.threshold_applied ? "Active" : "Waiting"}</strong>
+          </div>
+          <div className={processingFlags.corners_detected ? "stage-chip active" : "stage-chip"}>
+            <span>Corner Detection</span>
+            <strong>{processingFlags.corners_detected ? "Active" : "Waiting"}</strong>
+          </div>
+        </div>
+      </div>
+
+      <div className={`suggestion-pill ${suggestionClass}`}>
+        <span>Suggestion</span>
+        <strong>{isReady ? suggestionAction : "N/A"}</strong>
+      </div>
     </div>
   );
 }
