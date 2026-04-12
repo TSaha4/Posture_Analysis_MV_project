@@ -148,6 +148,7 @@ function App() {
                   onFinishSession={finishAndLeaveSession}
                 />
               )}
+              {screen === "exam" ? <VisionInsightsCard data={data} /> : null}
             </div>
           </aside>
         </div>
@@ -546,6 +547,105 @@ function ScoreMetric({ label, value, percent = null }) {
         <strong>{value}</strong>
       </div>
     </div>
+  );
+}
+
+function VisionInsightsCard({ data }) {
+  const action = data?.action || "no_action";
+  const actionTone =
+    action === "no_action"
+      ? "good"
+      : action === "adjust_posture"
+        ? "warn"
+        : "danger";
+
+  const stateRows = [
+    ["Position", data?.position || "N/A"],
+    ["Head", data?.head || "N/A"],
+    ["Gaze", data?.gaze || "N/A"],
+  ];
+
+  const processingRows = [
+    ["Edge Detection", data?.vision_processing?.edge_detection],
+    ["Thresholding", data?.vision_processing?.thresholding],
+    ["Corner Detection", data?.vision_processing?.corner_detection],
+  ];
+
+  return (
+    <section className="module-card">
+      <div className="module-header">
+        <div>
+          <p className="eyebrow">Machine Vision Insights</p>
+          <h3>Essential signals</h3>
+        </div>
+      </div>
+
+      <div className="insight-section">
+        <p className="eyebrow">Motion</p>
+        <div className="insight-grid">
+          <div className="insight-row">
+            <span>Movement Level</span>
+            <strong>{data?.movement_level || "low"}</strong>
+          </div>
+        </div>
+      </div>
+
+      <div className="insight-section">
+        <p className="eyebrow">Attention</p>
+        <div className="insight-grid">
+          <div className="insight-row full">
+            <span>Looking away</span>
+            <strong>{Number(data?.attention_duration ?? 0).toFixed(1)}s</strong>
+          </div>
+        </div>
+      </div>
+
+      <div className="insight-section">
+        <p className="eyebrow">System Suggestion</p>
+        <div className={`suggestion-pill ${actionTone}`}>
+          <strong>{action}</strong>
+          <span>{data?.suggestion || "Waiting..."}</span>
+        </div>
+      </div>
+
+      <details className="insight-details">
+        <summary>Details</summary>
+        <div className="detail-list">
+          {stateRows.map(([label, value]) => (
+            <div key={label} className="insight-row">
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </div>
+          ))}
+          <div className="insight-row">
+            <span>Movement Value</span>
+            <strong>{Number(data?.movement_value ?? 0).toFixed(2)}</strong>
+          </div>
+          <div className="insight-row">
+            <span>Normalized Face X</span>
+            <strong>{Number(data?.normalized_face_x ?? 0).toFixed(3)}</strong>
+          </div>
+          <div className="insight-row">
+            <span>Normalized Face Y</span>
+            <strong>{Number(data?.normalized_face_y ?? 0).toFixed(3)}</strong>
+          </div>
+          <div className="insight-row">
+            <span>Normalized Head Angle</span>
+            <strong>{Number(data?.normalized_head_angle ?? 0).toFixed(3)}</strong>
+          </div>
+          <div className="insight-row">
+            <span>Normalized Eye Dir</span>
+            <strong>{Number(data?.normalized_eye_dir ?? 0).toFixed(3)}</strong>
+          </div>
+          {processingRows.map(([label, active]) => (
+            <div key={label} className="insight-row">
+              <span>{label}</span>
+              <strong>{active ? "Active" : "Idle"}</strong>
+            </div>
+          ))}
+        </div>
+      </details>
+    </section>
   );
 }
 

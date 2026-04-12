@@ -38,6 +38,7 @@ calibration_frozen = False
 calibration_frozen_until = 0.0
 CALIBRATION_FREEZE_SECONDS = 1.5
 QUESTION_ERROR_TOLERANCE_PERCENT = 10.0
+STATE_POLL_SECONDS = 0.5
 
 baseline = None
 prev_face_center = None
@@ -73,9 +74,14 @@ current_state_data = {
     "eye_dir": 0.0,
     "eye_ratio": 0.0,
     "eye_distance": 0.0,
+    "normalized_face_x": 0.0,
+    "normalized_face_y": 0.0,
+    "normalized_head_angle": 0.0,
+    "normalized_eye_dir": 0.0,
     "movement": 0.0,
     "movement_value": 0.0,
     "movement_level": "low",
+    "attention_duration": 0.0,
     "gaze_away_counter": 0,
     "processing_flags": {
         "edge_detected": False,
@@ -89,6 +95,21 @@ current_state_data = {
     "identified_by": "Machine Vision Rules",
     "trust_score": 100,
     "reward": 0,
+    "pipeline_status": {
+        "preprocessing": True,
+        "segmentation": True,
+        "feature_extraction": True,
+        "normalization": True,
+        "classification": True,
+        "temporal_smoothing": True,
+        "motion_analysis": True,
+        "decision": True,
+    },
+    "vision_processing": {
+        "edge_detection": True,
+        "thresholding": True,
+        "corner_detection": True,
+    },
     "is_cheating": False,
     "action": None,
     "state": None,
@@ -270,6 +291,10 @@ def camera_loop():
         eye_dir = float(info.get("eye_dir", 0.0)) if info else 0.0
         eye_ratio = float(info.get("eye_ratio", 0.0)) if info and info.get("eye_ratio") is not None else 0.0
         eye_distance = float(info.get("eye_dist", 0.0)) if info else 0.0
+        normalized_face_x = 0.0
+        normalized_face_y = 0.0
+        normalized_head_angle = 0.0
+        normalized_eye_dir = 0.0
         face_inside_ratio = 0.0
         calibration_ready = False
 
@@ -286,6 +311,12 @@ def camera_loop():
             gaze_away_counter = 0
         elif info and baseline:
             state = smooth_state(build_state(info, baseline))
+            baseline_face_w = max(float(baseline.get("face_w", 1.0)), 1.0)
+            baseline_face_h = max(float(baseline.get("face_h", 1.0)), 1.0)
+            normalized_face_x = (float(info.get("face_x", 0.0)) - float(baseline.get("face_x", 0.0))) / baseline_face_w
+            normalized_face_y = (float(info.get("face_y", 0.0)) - float(baseline.get("face_y", 0.0))) / baseline_face_h
+            normalized_head_angle = float(info.get("head_angle", 0.0)) - float(baseline.get("head_angle", 0.0))
+            normalized_eye_dir = float(info.get("eye_dir", 0.0)) - float(baseline.get("eye_dir", 0.0))
 
             if state:
                 current_face_center = (float(info["face_x"]), float(info["face_y"]))
@@ -373,6 +404,22 @@ def camera_loop():
         position = state[0] if state else None
         head = state[1] if state else None
         gaze = state[2] if state else None
+        attention_duration = round(gaze_away_counter * STATE_POLL_SECONDS, 2)
+        pipeline_status = {
+            "preprocessing": True,
+            "segmentation": True,
+            "feature_extraction": True,
+            "normalization": True,
+            "classification": True,
+            "temporal_smoothing": True,
+            "motion_analysis": True,
+            "decision": True,
+        }
+        vision_processing = {
+            "edge_detection": processing_flags["edge_detected"],
+            "thresholding": processing_flags["threshold_applied"],
+            "corner_detection": processing_flags["corners_detected"],
+        }
 
         with data_lock:
             current_frame = buffer.tobytes()
@@ -392,11 +439,18 @@ def camera_loop():
                 "eye_dir": eye_dir,
                 "eye_ratio": eye_ratio,
                 "eye_distance": eye_distance,
+                "normalized_face_x": normalized_face_x,
+                "normalized_face_y": normalized_face_y,
+                "normalized_head_angle": normalized_head_angle,
+                "normalized_eye_dir": normalized_eye_dir,
                 "movement": movement,
                 "movement_value": movement,
                 "movement_level": movement_label,
+                "attention_duration": attention_duration,
                 "gaze_away_counter": gaze_away_counter,
                 "processing_flags": processing_flags,
+                "pipeline_status": pipeline_status,
+                "vision_processing": vision_processing,
                 "error_tolerance_percent": QUESTION_ERROR_TOLERANCE_PERCENT,
                 "position": position,
                 "head": head,
