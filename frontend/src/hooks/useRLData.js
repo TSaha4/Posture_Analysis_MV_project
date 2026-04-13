@@ -29,6 +29,7 @@ const useRLData = (isActive) => {
     calibration_snapshot: null,
     calibration_frozen: false,
     calibration_freeze_remaining: 0.0,
+    question_duration_seconds: 180,
     suggestion: "Waiting...",
     movement_value: 0,
     movement_level: "low",

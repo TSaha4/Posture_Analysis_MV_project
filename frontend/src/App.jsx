@@ -5,7 +5,7 @@ import hrQuestions from "./data/hrQuestions.json";
 import "./App.css";
 
 const API = "http://127.0.0.1:8000";
-const QUESTION_SECONDS = 180;
+const DEFAULT_QUESTION_SECONDS = 180;
 
 function App() {
   const [screen, setScreen] = useState("home");
@@ -269,20 +269,26 @@ function ExamPanel({ data, showToast, setExamProgress, onFinishSession }) {
   const [questions, setQuestions] = useState([]);
   const [questionIdx, setQuestionIdx] = useState(0);
   const [answering, setAnswering] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(QUESTION_SECONDS);
+  const questionSeconds = Math.max(1, Number(data?.question_duration_seconds) || DEFAULT_QUESTION_SECONDS);
+  const [timeLeft, setTimeLeft] = useState(questionSeconds);
   const [result, setResult] = useState(null);
   const [examReady, setExamReady] = useState(false);
   const baselineReady = ["posture", "exam", "exam_question"].includes(data?.mode);
 
   useEffect(() => {
     if (answering) {
-      setExamProgress((timeLeft / QUESTION_SECONDS) * 100);
+      setExamProgress((timeLeft / questionSeconds) * 100);
       return;
     }
     setExamProgress(result ? 0 : 100);
-  }, [answering, timeLeft, result, setExamProgress]);
+  }, [answering, timeLeft, result, questionSeconds, setExamProgress]);
 
   useEffect(() => () => setExamProgress(100), [setExamProgress]);
+
+  useEffect(() => {
+    if (answering) return;
+    setTimeLeft(questionSeconds);
+  }, [answering, questionSeconds]);
 
   const ensureExamStarted = useCallback(async () => {
     try {
@@ -301,11 +307,11 @@ function ExamPanel({ data, showToast, setExamProgress, onFinishSession }) {
     setQuestions(shuffled);
     setQuestionIdx(0);
     setAnswering(false);
-    setTimeLeft(QUESTION_SECONDS);
+    setTimeLeft(questionSeconds);
     setResult(null);
 
     ensureExamStarted();
-  }, [ensureExamStarted]);
+  }, [ensureExamStarted, questionSeconds]);
 
   const restartSession = async () => {
     try {
@@ -318,7 +324,7 @@ function ExamPanel({ data, showToast, setExamProgress, onFinishSession }) {
     setQuestions(shuffled);
     setQuestionIdx(0);
     setAnswering(false);
-    setTimeLeft(QUESTION_SECONDS);
+    setTimeLeft(questionSeconds);
     setResult(null);
     setExamReady(false);
     showToast("Session restarted.", "info");
@@ -355,7 +361,7 @@ function ExamPanel({ data, showToast, setExamProgress, onFinishSession }) {
 
   const startAnswer = async () => {
     setResult(null);
-    setTimeLeft(QUESTION_SECONDS);
+    setTimeLeft(questionSeconds);
     try {
       const started = await ensureExamStarted();
       if (!started) return;
@@ -370,13 +376,13 @@ function ExamPanel({ data, showToast, setExamProgress, onFinishSession }) {
   const nextQuestion = () => {
     setQuestionIdx((q) => Math.min(q + 1, 2));
     setResult(null);
-    setTimeLeft(QUESTION_SECONDS);
+    setTimeLeft(questionSeconds);
     setAnswering(false);
   };
 
   const redoQuestion = () => {
     setResult(null);
-    setTimeLeft(QUESTION_SECONDS);
+    setTimeLeft(questionSeconds);
     setAnswering(false);
   };
 

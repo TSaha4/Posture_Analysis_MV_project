@@ -39,6 +39,7 @@ calibration_frozen_until = 0.0
 CALIBRATION_FREEZE_SECONDS = 1.5
 QUESTION_ERROR_TOLERANCE_PERCENT = 10.0
 STATE_POLL_SECONDS = 0.5
+QUESTION_DURATION_SECONDS = 5
 
 baseline = None
 prev_face_center = None
@@ -89,6 +90,7 @@ current_state_data = {
         "corners_detected": False,
     },
     "error_tolerance_percent": QUESTION_ERROR_TOLERANCE_PERCENT,
+    "question_duration_seconds": QUESTION_DURATION_SECONDS,
     "position": None,
     "head": None,
     "gaze": None,
@@ -116,24 +118,10 @@ current_state_data = {
 }
 
 
-def time_score_for_elapsed(elapsed_seconds):
-    if elapsed_seconds < 5:
-        return 0
-    if elapsed_seconds < 10:
-        return 10
-    if elapsed_seconds < 20:
-        return 25
-    if elapsed_seconds < 30:
-        return 40
-    if elapsed_seconds < 45:
-        return 55
-    if elapsed_seconds < 60:
-        return 70
-    if elapsed_seconds < 90:
-        return 82
-    if elapsed_seconds < 120:
-        return 92
-    return 100
+def time_score_for_elapsed(elapsed_seconds, target_seconds):
+    safe_target = max(float(target_seconds), 1.0)
+    usage_percent = min((float(elapsed_seconds) / safe_target) * 100.0, 100.0)
+    return round(usage_percent, 1)
 
 
 def label_for_score(score):
@@ -608,11 +596,12 @@ def end_question():
     raw_error_percent = round((bad_frames / total_frames) * 100, 1) if total_frames > 0 else 100.0
     penalty_error_percent = round(max(0.0, raw_error_percent - QUESTION_ERROR_TOLERANCE_PERCENT), 1)
     posture_score = round(max(0.0, 100.0 - penalty_error_percent), 1)
-    time_score = float(time_score_for_elapsed(elapsed_time))
+    time_score = float(time_score_for_elapsed(elapsed_time, QUESTION_DURATION_SECONDS))
     time_penalty = round(max(0.0, 100.0 - time_score), 1)
     score = round(max(0.0, (posture_score * 0.25) + (time_score * 0.75)), 1)
     label = label_for_score(score)
     errors = []
+    time_usage_percent = round(min((elapsed_time / max(float(QUESTION_DURATION_SECONDS), 1.0)) * 100.0, 100.0), 1)
 
     if penalty_error_percent > 0:
         errors.append({
@@ -627,22 +616,22 @@ def end_question():
             "percent_frames": raw_error_percent,
         })
 
-    if time_score < 50:
+    if time_usage_percent < 50:
         errors.append({
             "key": "time_penalty",
-            "description": f"Very short answer duration ({elapsed_time:.1f}s).",
+            "description": f"Only {time_usage_percent:.1f}% of the allotted time was used ({elapsed_time:.1f}s of {QUESTION_DURATION_SECONDS}s).",
             "percent_frames": round(100.0 - time_score, 1),
         })
-    elif time_score < 80:
+    elif time_usage_percent < 80:
         errors.append({
             "key": "time_penalty",
-            "description": f"Answer duration could be longer ({elapsed_time:.1f}s).",
+            "description": f"Answer used {time_usage_percent:.1f}% of the allotted time ({elapsed_time:.1f}s of {QUESTION_DURATION_SECONDS}s).",
             "percent_frames": round(100.0 - time_score, 1),
         })
     else:
         errors.append({
             "key": "time_credit",
-            "description": f"Good answer duration ({elapsed_time:.1f}s).",
+            "description": f"Good time usage: {time_usage_percent:.1f}% of the allotted time ({elapsed_time:.1f}s of {QUESTION_DURATION_SECONDS}s).",
             "percent_frames": time_score,
         })
 
@@ -656,6 +645,7 @@ def end_question():
         "penalty_error_percent": penalty_error_percent,
         "time_score": time_score,
         "time_penalty": time_penalty,
+        "time_usage_percent": time_usage_percent,
     })
 
     return jsonify({
@@ -672,6 +662,8 @@ def end_question():
         "error_tolerance_percent": QUESTION_ERROR_TOLERANCE_PERCENT,
         "raw_error_percent": raw_error_percent,
         "penalty_error_percent": penalty_error_percent,
+        "time_usage_percent": time_usage_percent,
+        "question_duration_seconds": QUESTION_DURATION_SECONDS,
         "errors": errors,
     })
 
