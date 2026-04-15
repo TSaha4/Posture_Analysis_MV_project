@@ -1,6 +1,4 @@
-# Posture Analysis Studio
-
-A real-time machine-vision-based application to monitor user posture and gaze using a webcam.
+Posture Analysis Studio is a real-time, machine-vision-based application designed to monitor user posture and gaze during structured sessions like online exams or prolonged work periods. Using a standard webcam, it continuously tracks the user's facial position, head angle, eye direction, and overall movement relative to a calibrated "baseline" profile. Based on this data, the system calculates a dynamic score that detects and penalizes excessive motion, slouching, or frequently looking away from the screen. With features like real-time visual feedback via bounding boxes, intelligent edge detection powered by OpenCV, and timed session reporting, it provides an effective way to improve ergonomic habits and ensure focus.
 
 ## Steps to Run
 
